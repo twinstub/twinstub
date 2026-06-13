@@ -1,0 +1,67 @@
+version: 1
+# Two branches as two scenarios: pick the outcome with the scenario header.
+scenarios:
+  - id: kyc.flow.approved
+    description: "KYC application: pending, then approved"
+    session:
+      key: "header:X-Applicant-ID"
+      ttl: 30m
+    initial: pending
+    states:
+      pending:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: kyc.approved
+              after: 5s
+              body: |
+                {"event": "kyc.approved", "applicant_id": "{{ .Session.Key }}",
+                 "application_id": "kyc_{{ .Session.ID }}"}
+            goto: approved
+        on:
+          - when: {method: POST, path: /v1/kyc/applications}
+            reply:
+              status: 201
+              body: |
+                {"application_id": "kyc_{{ .Session.ID }}",
+                 "applicant_id": "{{ .Session.Key }}", "status": "pending"}
+          - when: {method: GET, path: "/v1/kyc/applications/{id}"}
+            reply: {status: 200, body: '{"status": "pending"}'}
+      approved:
+        on:
+          - when: {method: GET, path: "/v1/kyc/applications/{id}"}
+            reply: {status: 200, body: '{"status": "approved"}'}
+
+  - id: kyc.flow.rejected
+    description: "KYC application: pending, then rejected"
+    session:
+      key: "header:X-Applicant-ID"
+      ttl: 30m
+    initial: pending
+    states:
+      pending:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: kyc.rejected
+              after: 5s
+              body: |
+                {"event": "kyc.rejected", "applicant_id": "{{ .Session.Key }}",
+                 "application_id": "kyc_{{ .Session.ID }}",
+                 "reason": "document_unreadable"}
+            goto: rejected
+        on:
+          - when: {method: POST, path: /v1/kyc/applications}
+            reply:
+              status: 201
+              body: |
+                {"application_id": "kyc_{{ .Session.ID }}",
+                 "applicant_id": "{{ .Session.Key }}", "status": "pending"}
+          - when: {method: GET, path: "/v1/kyc/applications/{id}"}
+            reply: {status: 200, body: '{"status": "pending"}'}
+      rejected:
+        on:
+          - when: {method: GET, path: "/v1/kyc/applications/{id}"}
+            reply:
+              status: 200
+              body: '{"status": "rejected", "reason": "document_unreadable"}'

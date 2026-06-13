@@ -1,0 +1,40 @@
+version: 1
+
+server:
+  port: 8080
+  admin:
+    enabled: true
+    port: 9090
+
+defaults:
+  latency: 0ms
+  scenario_header: X-TwinStub-Scenario
+
+targets:
+  # Normal target with a valid signature.
+  merchant_callback:
+    url: ${CALLBACK_URL:-http://localhost:9999/webhook}
+    headers:
+      X-Source: twinstub
+    signing:
+      algorithm: hmac-sha256
+      secret: ${WEBHOOK_SECRET:-whsec_fintech_demo}
+      header: X-TwinStub-Signature
+      format: "t={timestamp},v1={signature}"
+    retry:
+      attempts: 3
+      backoff: 2s
+
+  # Deliberately wrong secret: use it to test that your signature
+  # validation actually rejects bad signatures (see webhook-bad-signature).
+  bad_signature_callback:
+    url: ${CALLBACK_URL:-http://localhost:9999/webhook}
+    signing:
+      algorithm: hmac-sha256
+      secret: whsec_intentionally_wrong
+      header: X-TwinStub-Signature
+      format: "t={timestamp},v1={signature}"
+
+include:
+  - "*/scenario.yaml"
+  - "*/endpoints.yaml"

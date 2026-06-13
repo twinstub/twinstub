@@ -1,0 +1,67 @@
+version: 2
+
+project_name: twinstub
+
+builds:
+  - main: ./cmd/twinstub
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/twinstub/twinstub/internal/version.Version={{ .Version }}
+      - -X github.com/twinstub/twinstub/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/twinstub/twinstub/internal/version.Date={{ .Date }}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+dockers:
+  - image_templates:
+      - ghcr.io/twinstub/twinstub:{{ .Version }}-amd64
+      - ghcr.io/twinstub/twinstub:latest-amd64
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - --platform=linux/amd64
+  - image_templates:
+      - ghcr.io/twinstub/twinstub:{{ .Version }}-arm64
+      - ghcr.io/twinstub/twinstub:latest-arm64
+    use: buildx
+    goarch: arm64
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - --platform=linux/arm64
+
+docker_manifests:
+  - name_template: ghcr.io/twinstub/twinstub:{{ .Version }}
+    image_templates:
+      - ghcr.io/twinstub/twinstub:{{ .Version }}-amd64
+      - ghcr.io/twinstub/twinstub:{{ .Version }}-arm64
+  - name_template: ghcr.io/twinstub/twinstub:latest
+    image_templates:
+      - ghcr.io/twinstub/twinstub:latest-amd64
+      - ghcr.io/twinstub/twinstub:latest-arm64
+
+release:
+  draft: false
+
+changelog:
+  use: github-native

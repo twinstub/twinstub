@@ -1,0 +1,62 @@
+version: 1
+scenarios:
+  - id: payment.3ds
+    description: "3DS challenge: pending, customer confirms, success"
+    session:
+      key: "body:$.order_id"
+      ttl: 30m
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply:
+              status: 200
+              body: |
+                {"id": "pay_{{ .Session.ID }}", "order_id": "{{ .Session.Key }}",
+                 "status": "requires_action",
+                 "next_action": {"type": "3ds_challenge",
+                   "url": "https://bank.example/3ds/{{ .Session.ID }}"}}
+            set:
+              amount: "{{ .Request.Body.amount }}"
+            goto: awaiting_3ds
+
+      awaiting_3ds:
+        on:
+          # The demo OTP is 123456. Order matters: the success rule first.
+          - when:
+              method: POST
+              path: /v1/payments/3ds/confirm
+              body:
+                - path: $.code
+                  equals: "123456"
+            reply:
+              status: 200
+              body: '{"id": "pay_{{ .Session.ID }}", "status": "processing"}'
+            goto: confirming
+          - when: {method: POST, path: /v1/payments/3ds/confirm}
+            reply:
+              status: 400
+              body: '{"error": "invalid_3ds_code", "detail": "wrong code, the demo accepts 123456"}'
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "requires_action"}'}
+
+      confirming:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: payment.succeeded
+              after: 2s
+              body: |
+                {"event": "payment.succeeded", "payment_id": "pay_{{ .Session.ID }}",
+                 "order_id": "{{ .Session.Key }}", "amount": {{ .Session.Vars.amount }},
+                 "three_ds": "passed"}
+            goto: succeeded
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "processing"}'}
+
+      succeeded:
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "succeeded", "three_ds": "passed"}'}

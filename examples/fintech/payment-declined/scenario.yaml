@@ -1,0 +1,32 @@
+version: 1
+scenarios:
+  - id: payment.declined
+    description: "Card declined: insufficient funds"
+    session:
+      key: "body:$.order_id"
+      ttl: 30m
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply:
+              status: 402
+              body: |
+                {"id": "pay_{{ .Session.ID }}", "order_id": "{{ .Session.Key }}",
+                 "status": "declined", "decline_code": "insufficient_funds"}
+            goto: declined
+      declined:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: payment.declined
+              after: 1s
+              body: |
+                {"event": "payment.declined", "payment_id": "pay_{{ .Session.ID }}",
+                 "order_id": "{{ .Session.Key }}", "decline_code": "insufficient_funds"}
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply:
+              status: 200
+              body: '{"status": "declined", "decline_code": "insufficient_funds"}'

@@ -1,0 +1,28 @@
+version: 1
+scenarios:
+  - id: chaos.timeouts
+    description: "Flaky upstream: fails twice, then recovers (cycle demo)"
+    session:
+      key: "header:X-Request-Group"
+      ttl: 10m
+    initial: failing_1
+    states:
+      failing_1:
+        on:
+          - when: {method: GET, path: /v1/balance}
+            reply:
+              status: 503
+              latency: 2s
+              body: '{"error": "service_unavailable", "attempt": 1}'
+            goto: failing_2
+      failing_2:
+        on:
+          - when: {method: GET, path: /v1/balance}
+            reply: {status: 0}   # second attempt: connection drop
+            goto: recovered
+      recovered:
+        on:
+          - when: {method: GET, path: /v1/balance}
+            reply:
+              status: 200
+              body: '{"balance": 104250, "currency": "EUR"}'

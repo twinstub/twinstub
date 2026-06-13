@@ -1,0 +1,37 @@
+version: 1
+scenarios:
+  - id: payment.success
+    description: "Payment succeeds, confirmation webhook follows"
+    session:
+      key: "body:$.order_id"
+      ttl: 30m
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply:
+              status: 201
+              body: |
+                {"id": "pay_{{ .Session.ID }}", "order_id": "{{ .Session.Key }}",
+                 "amount": {{ .Request.Body.amount }}, "status": "processing"}
+            set:
+              amount: "{{ .Request.Body.amount }}"
+            goto: processing
+      processing:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: payment.succeeded
+              after: 2s
+              body: |
+                {"event": "payment.succeeded", "payment_id": "pay_{{ .Session.ID }}",
+                 "order_id": "{{ .Session.Key }}", "amount": {{ .Session.Vars.amount }}}
+            goto: succeeded
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "processing"}'}
+      succeeded:
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "succeeded"}'}

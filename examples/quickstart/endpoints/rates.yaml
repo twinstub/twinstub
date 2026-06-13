@@ -1,0 +1,23 @@
+version: 1
+endpoints:
+  - id: get_rates_usd
+    when:
+      method: GET
+      path: /v1/rates
+      query:
+        currency: "USD"
+    reply:
+      status: 200
+      headers: {Content-Type: application/json}
+      latency: 150ms
+      body: |
+        {"currency": "USD", "rate": 1.0, "ts": "{{ now }}"}
+
+  # Order matters: first match wins, so this is the fallback.
+  - id: get_rates_fallback
+    when:
+      method: GET
+      path: /v1/rates
+    reply:
+      status: 400
+      body: '{"error": "unsupported_currency"}'

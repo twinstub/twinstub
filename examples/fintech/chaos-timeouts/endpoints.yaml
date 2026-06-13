@@ -1,0 +1,27 @@
+version: 1
+# Stateless chaos endpoints: no scenario header needed.
+endpoints:
+  - id: chaos_slow
+    when: {method: GET, path: /chaos/slow}
+    reply:
+      status: 200
+      latency: 35s
+      body: '{"finally": true}'
+
+  - id: chaos_502
+    when: {method: GET, path: /chaos/502}
+    reply:
+      status: 502
+      body: '{"error": "bad_gateway"}'
+
+  - id: chaos_503
+    when: {method: GET, path: /chaos/503}
+    reply:
+      status: 503
+      headers: {Retry-After: "30"}
+      body: '{"error": "service_unavailable"}'
+
+  - id: chaos_drop
+    when: {method: GET, path: /chaos/drop}
+    reply:
+      status: 0   # close the TCP connection without any HTTP response

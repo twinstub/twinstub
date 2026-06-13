@@ -1,0 +1,83 @@
+version: 1
+scenarios:
+  - id: payment.refund
+    description: "Partial then full refund of a captured payment"
+    session:
+      key: "body:$.order_id"
+      ttl: 30m
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply:
+              status: 201
+              body: |
+                {"id": "pay_{{ .Session.ID }}", "order_id": "{{ .Session.Key }}",
+                 "amount": {{ .Request.Body.amount }}, "status": "succeeded"}
+            set:
+              amount: "{{ .Request.Body.amount }}"
+            goto: paid
+
+      paid:
+        on:
+          # Refund of less than 1000 (the demo full price) is partial.
+          - when:
+              method: POST
+              path: /v1/refunds
+              body:
+                - path: $.amount
+                  lt: 1000
+            reply:
+              status: 201
+              body: |
+                {"refund_id": "re_{{ ulid }}", "payment_id": "pay_{{ .Session.ID }}",
+                 "amount": {{ .Request.Body.amount }}, "status": "partial_refund"}
+            goto: partially_refunded
+          - when: {method: POST, path: /v1/refunds}
+            reply:
+              status: 201
+              body: |
+                {"refund_id": "re_{{ ulid }}", "payment_id": "pay_{{ .Session.ID }}",
+                 "amount": {{ .Request.Body.amount }}, "status": "refunded"}
+            goto: refunded
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "succeeded", "refunded": 0}'}
+
+      partially_refunded:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: payment.refund.partial
+              after: 2s
+              body: |
+                {"event": "payment.refund.partial", "payment_id": "pay_{{ .Session.ID }}",
+                 "order_id": "{{ .Session.Key }}"}
+        on:
+          # A second refund completes the amount: cycle to refunded.
+          - when: {method: POST, path: /v1/refunds}
+            reply:
+              status: 201
+              body: |
+                {"refund_id": "re_{{ ulid }}", "payment_id": "pay_{{ .Session.ID }}",
+                 "status": "refunded"}
+            goto: refunded
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "partially_refunded"}'}
+
+      refunded:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: payment.refund.full
+              after: 2s
+              body: |
+                {"event": "payment.refund.full", "payment_id": "pay_{{ .Session.ID }}",
+                 "order_id": "{{ .Session.Key }}"}
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "refunded"}'}
+          - when: {method: POST, path: /v1/refunds}
+            reply:
+              status: 409
+              body: '{"error": "already_refunded"}'

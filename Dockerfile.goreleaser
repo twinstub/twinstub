@@ -1,0 +1,10 @@
+# Used by goreleaser: the binary is prebuilt, this only packages it.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY twinstub /twinstub
+ENV TWINSTUB_ALLOW_PRIVATE_TARGETS=true
+ENV TWINSTUB_LOG_FORMAT=json
+WORKDIR /work
+EXPOSE 8080 9090
+USER nonroot
+ENTRYPOINT ["/twinstub"]
+CMD ["serve"]

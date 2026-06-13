@@ -1,0 +1,53 @@
+version: 1
+scenarios:
+  - id: payment.chargeback
+    description: "Payment succeeds, then a chargeback arrives (spec 5.3)"
+    session:
+      key: "body:$.order_id"
+      ttl: 30m
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply:
+              status: 201
+              body: |
+                {"id": "pay_{{ .Session.ID }}", "order_id": "{{ .Session.Key }}",
+                 "status": "processing"}
+            set:
+              amount: "{{ .Request.Body.amount }}"
+            goto: processing
+
+      processing:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: payment.succeeded
+              after: 3s
+              body: |
+                {"event": "payment.succeeded", "payment_id": "pay_{{ .Session.ID }}",
+                 "amount": {{ .Session.Vars.amount }}}
+            goto: succeeded
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "processing"}'}
+
+      succeeded:
+        enter:
+          - webhook:
+              target: merchant_callback
+              event: payment.chargeback
+              after: 10s   # "30 days later" compressed for the demo
+              body: |
+                {"event": "payment.chargeback", "payment_id": "pay_{{ .Session.ID }}",
+                 "reason": "fraudulent"}
+            goto: chargeback
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "succeeded"}'}
+
+      chargeback:
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "chargeback"}'}

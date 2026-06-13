@@ -1,0 +1,32 @@
+version: 1
+
+server:
+  port: 8080
+  admin:
+    enabled: true
+    port: 9090
+    # token: ${ADMIN_TOKEN}   # uncomment to require a bearer token
+
+defaults:
+  latency: 0ms
+  scenario_header: X-TwinStub-Scenario
+
+# Named webhook destinations. Point CALLBACK_URL at your service or at a
+# local receiver (e.g. `npx http-echo-server 9999`).
+targets:
+  merchant_callback:
+    url: ${CALLBACK_URL:-http://localhost:9999/webhook}
+    headers:
+      X-Source: twinstub
+    signing:
+      algorithm: hmac-sha256
+      secret: ${WEBHOOK_SECRET:-whsec_demo_secret}
+      header: X-TwinStub-Signature
+      format: "t={timestamp},v1={signature}"
+    retry:
+      attempts: 3
+      backoff: 2s
+
+include:
+  - endpoints/*.yaml
+  - scenarios/*.yaml

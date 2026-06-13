@@ -1,0 +1,36 @@
+version: 1
+scenarios:
+  - id: webhook.bad_signature
+    description: "Webhook signed with a wrong secret, for testing validation"
+    session:
+      key: "body:$.order_id"
+      ttl: 30m
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply:
+              status: 201
+              body: |
+                {"id": "pay_{{ .Session.ID }}", "order_id": "{{ .Session.Key }}",
+                 "status": "processing"}
+            goto: processing
+      processing:
+        enter:
+          # bad_signature_callback signs with a deliberately wrong secret.
+          - webhook:
+              target: bad_signature_callback
+              event: payment.succeeded
+              after: 1s
+              body: |
+                {"event": "payment.succeeded", "payment_id": "pay_{{ .Session.ID }}",
+                 "note": "this signature must FAIL your validation"}
+            goto: done
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "processing"}'}
+      done:
+        on:
+          - when: {method: GET, path: "/v1/payments/{id}"}
+            reply: {status: 200, body: '{"status": "succeeded"}'}
