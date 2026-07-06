@@ -3,14 +3,16 @@ scenarios:
   - id: payment.chargeback
     description: "Payment succeeds, then a chargeback arrives"
     session:
-      key: "body:$.order_id"
+      # The order id lives in the path, so creating and polling use the
+      # same natural URL; no request bodies on GET.
+      key: "path:{order_id}"
       ttl: 30m
     initial: new
 
     states:
       new:
         on:
-          - when: {method: POST, path: /v1/payments}
+          - when: {method: POST, path: "/v1/orders/{order_id}/payment"}
             reply:
               status: 201
               body: |
@@ -31,7 +33,7 @@ scenarios:
                  "amount": {{ .Session.Vars.amount }}}
             goto: succeeded
         on:
-          - when: {method: GET, path: "/v1/payments/{id}"}
+          - when: {method: GET, path: "/v1/orders/{order_id}/payment"}
             reply: {status: 200, body: '{"status": "processing"}'}
 
       succeeded:
@@ -45,10 +47,10 @@ scenarios:
                  "reason": "fraudulent"}
             goto: chargeback
         on:
-          - when: {method: GET, path: "/v1/payments/{id}"}
+          - when: {method: GET, path: "/v1/orders/{order_id}/payment"}
             reply: {status: 200, body: '{"status": "succeeded"}'}
 
       chargeback:
         on:
-          - when: {method: GET, path: "/v1/payments/{id}"}
+          - when: {method: GET, path: "/v1/orders/{order_id}/payment"}
             reply: {status: 200, body: '{"status": "chargeback"}'}

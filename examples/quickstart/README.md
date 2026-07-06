@@ -38,25 +38,24 @@ curl -s 'localhost:8080/v1/rates?currency=GBP'
 ## 4. Run the chargeback scenario
 
 ```sh
-curl -s -X POST localhost:8080/v1/payments \
+curl -s -X POST localhost:8080/v1/orders/ord_42/payment \
   -H 'X-TwinStub-Scenario: payment.chargeback' \
   -H 'Content-Type: application/json' \
-  -d '{"order_id": "ord_42", "amount": 1999}'
+  -d '{"amount": 1999}'
 # {"id": "pay_...", "order_id": "ord_42", "status": "processing"}
 ```
 
 Watch the receiver: after ~3s a signed `payment.succeeded` webhook arrives,
-after ~10 more seconds `payment.chargeback` follows. Poll the state between
-the webhooks; the same `order_id` keeps you in the same session:
+after ~10 more seconds `payment.chargeback` follows. The session is keyed
+by the `{order_id}` path parameter, so polling is a plain GET:
 
 ```sh
-curl -s localhost:8080/v1/payments/pay_x -H 'Content-Type: application/json' \
-  -d '{"order_id": "ord_42"}' -X GET
+curl -s localhost:8080/v1/orders/ord_42/payment
+# processing -> succeeded -> chargeback, depending on when you ask
 ```
 
-Note: this scenario keys sessions by `body:$.order_id`, so state polls in
-this demo carry the key in the body. Real configs often use `path:{id}` or
-`header:X-Idempotency-Key` selectors instead.
+Other session key selectors exist for other API shapes: `body:$.field`,
+`header:X-Idempotency-Key`, `query:param` (see docs/dsl.md).
 
 ## 5. Inspect via the admin API
 

@@ -44,16 +44,16 @@ In another terminal, start any webhook receiver on :9999 (a one-liner is
 in the generated README), then:
 
 ```sh
-curl -s -X POST localhost:8080/v1/payments \
+curl -s -X POST localhost:8080/v1/orders/ord_42/payment \
   -H 'X-TwinStub-Scenario: payment.chargeback' \
   -H 'Content-Type: application/json' \
-  -d '{"order_id": "ord_42", "amount": 1999}'
+  -d '{"amount": 1999}'
 ```
 
 You get a synchronous `201` with a payment id. Three seconds later your
 receiver gets a signed `payment.succeeded` webhook; ten seconds after that,
-`payment.chargeback`. Poll the payment in between and watch its status
-change. That whole flow is [one YAML file](internal/scaffold/templates/scenarios/payment_chargeback.yaml).
+`payment.chargeback`. Poll `GET /v1/orders/ord_42/payment` in between and
+watch its status change. That whole flow is [one YAML file](internal/scaffold/templates/scenarios/payment_chargeback.yaml).
 
 ## What is in the box
 
