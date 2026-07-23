@@ -29,6 +29,36 @@ real thing, with retries, a delivery journal and replay.
 It is a single binary you run locally or in CI. No cloud, no registration,
 MIT.
 
+## What you actually test
+
+TwinStub is the provider, faked. The code under test is yours: the client
+that builds the request, parses the response, receives the callback,
+verifies its signature and moves your own order or ledger forward. That
+code is full of branches that only run on rare events, and those branches
+are where integrations break:
+
+- **Inbound webhooks**: does your handler verify the signature and reject a
+  forged one? does it answer 2xx so the sender stops retrying?
+- **Unhappy endings**: on an expired or failed payment, do you release the
+  goods you reserved and avoid crediting money that never arrived?
+- **Idempotency**: the same event delivered twice (a retry) must settle
+  once, not twice.
+- **Out-of-order delivery**: `completed` can arrive before you finished
+  handling `pending`.
+- **Transport faults**: a 3s stall or a dropped connection should retry or
+  fail cleanly, not hang.
+
+None of these need the provider's real servers, keys or money, and most
+cannot be triggered on demand in a provider sandbox at all. Think of it as
+a crash-test dummy: the provider is the stand-in, the safety being measured
+is your own code's.
+
+One honest limit: a twin is only as accurate as the scenario you write. If
+the YAML mismodels the real response, the twin repeats your mistake instead
+of catching it. So confirm the response shape once against the provider's
+own sandbox, then use TwinStub to drive the hundreds of edge cases the
+sandbox cannot.
+
 ## 5 minutes to the first webhook
 
 ```sh
