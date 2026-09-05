@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/twinstub/twinstub/actions/workflows/ci.yaml/badge.svg)](https://github.com/twinstub/twinstub/actions/workflows/ci.yaml)
 [![Release](https://img.shields.io/github/v/release/twinstub/twinstub)](https://github.com/twinstub/twinstub/releases)
-[![Go Report Card](https://goreportcard.com/badge/github.com/twinstub/twinstub)](https://goreportcard.com/report/github.com/twinstub/twinstub)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Deterministic API simulation for teams whose customers integrate with
