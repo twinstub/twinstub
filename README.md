@@ -10,6 +10,8 @@ as a real HTTP server with sessions, state and chains of signed webhooks:
 "payment succeeds, 30 days later a chargeback arrives" compressed into
 seconds.
 
+![TwinStub: a payment that succeeds, then charges back](docs/demo.gif)
+
 ## Why not just a mock server?
 
 If you provide an API (payments, logistics, CRM), your customers build
