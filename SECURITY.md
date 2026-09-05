@@ -2,9 +2,9 @@
 
 ## Supported versions
 
-TwinStub is pre-1.0 in the open. Security fixes land on `main` and in the
-latest tagged release. Older tags are not patched; upgrade to the latest
-release to receive fixes.
+The latest tagged release is supported. Security fixes land on `main` and in
+the next release; older tags are not patched, so upgrade to the latest release
+to receive fixes.
 
 ## Reporting a vulnerability
 
