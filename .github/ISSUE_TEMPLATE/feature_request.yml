@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a capability or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Note: changes to the YAML DSL or the admin API are stable contracts
+        and need a discussion issue **before** any code. This is the right
+        place to start that discussion.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to test or model that TwinStub cannot do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How might it look? A sketch of the YAML or the API is welcome.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

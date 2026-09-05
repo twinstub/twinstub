@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in TwinStub behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do **not** file security vulnerabilities
+        here - see SECURITY.md for the private channel.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you observe, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal config and the requests you sent. The smaller, the better.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: TwinStub version
+      description: Output of `twinstub version` (or the commit you built).
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / architecture
+      placeholder: e.g. macOS 14 arm64, Ubuntu 24.04 x86_64
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Server logs, the diagnostic 404, or the delivery journal entry.
+      render: shell
+    validations:
+      required: false
