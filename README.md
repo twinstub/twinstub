@@ -60,6 +60,25 @@ of catching it. So confirm the response shape once against the provider's
 own sandbox, then use TwinStub to drive the hundreds of edge cases the
 sandbox cannot.
 
+### Writing the assertion
+
+TwinStub produces the inputs: each ordering of events and webhooks, replayable
+and seeded so a run is deterministic. The assertion is yours, and where it points
+decides whether the test is worth anything.
+
+- **Assert your own resulting state, not the acks.** A handler can answer 2xx to
+  every delivery and still leave the account on the wrong plan or the order in the
+  wrong state. Check what the user can actually do once the whole lifecycle has
+  run, not that each webhook returned 200.
+- **Write the expected end state explicitly.** For each ordering, say which state
+  the client should land in: same events, different order, different expected
+  result. Snapshotting whatever the handler produced the first time quietly locks
+  in the current behaviour, bug included, and then stays green forever.
+- **Turn every real incident into a permanent scenario.** When a production
+  payload surprises you, save it as a scenario and commit it. The list of
+  cases you cannot trigger shrinks fast once incidents become fixtures instead of
+  memories, and each one makes the twin more accurate.
+
 ## 5 minutes to the first webhook
 
 ```sh
