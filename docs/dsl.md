@@ -165,7 +165,7 @@ scenarios:
           - webhook:
               target: merchant_callback
               event: payment.succeeded   # optional, sets X-TwinStub-Event
-              after: 3s                  # delay, max 7d, scaled by --time-scale
+              after: 3s                  # delay, max 365d, scaled by --time-scale
               body: '{"amount": {{ .Session.Vars.amount }}}'
             goto: succeeded    # fires after the FIRST delivery attempt
         on:
@@ -283,7 +283,7 @@ wall-clock time.
 |---|---|---|
 | Concurrent sessions | 10 000 | configurable |
 | Pending webhooks per session | 100 | 1 000 |
-| `after` interval | - | 7d |
+| `after` interval | - | 365d |
 | Reply/webhook body size | - | 5 MB |
 | States per scenario | - | 200 |
 | Session TTL | 30m | 24h |

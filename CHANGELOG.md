@@ -25,6 +25,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `fire_at` of pending webhooks in session details is reported in session
   time. It is unchanged for sessions that were never advanced.
+- The webhook `after` limit is raised from 7d to 365d. Session clocks make
+  long delays practical (chargebacks, refund windows, renewals); existing
+  configs stay valid.
 
 ## [1.0.0] - 2026-09-05
 

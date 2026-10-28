@@ -207,11 +207,11 @@ func TestLoadInvalid(t *testing.T) {
 			wantErr: []string{"ttl", "24h"},
 		},
 		{
-			name: "after exceeds 7d",
+			name: "after exceeds 365d",
 			mutate: func(f map[string]string) {
-				f["scenarios/payment.yaml"] = strings.Replace(validScenario, "after: 3s", "after: 8d", 1)
+				f["scenarios/payment.yaml"] = strings.Replace(validScenario, "after: 3s", "after: 366d", 1)
 			},
-			wantErr: []string{"after", "7d"},
+			wantErr: []string{"after", "365d"},
 		},
 		{
 			name: "unknown webhook target",

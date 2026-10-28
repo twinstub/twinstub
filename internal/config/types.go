@@ -14,8 +14,8 @@ import (
 // Hard limits from the spec (section 5.5). Not configurable.
 const (
 	HardMaxPendingPerSession = 1000
-	HardMaxAfter             = 7 * 24 * time.Hour
-	HardMaxBodySize          = 5 << 20 // 5 MB
+	HardMaxAfter             = 365 * 24 * time.Hour // long delays are practical with session clocks
+	HardMaxBodySize          = 5 << 20              // 5 MB
 	HardMaxStates            = 200
 	HardMaxSessionTTL        = 24 * time.Hour
 	DefaultSessionTTL        = 30 * time.Minute

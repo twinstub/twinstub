@@ -461,7 +461,7 @@ scenarios:
           - webhook:
               target: cb
               event: payment.chargeback
-              after: 7d
+              after: 30d
               body: '{"entered": {{ nowUnix }}, "at": {{ .Webhook.AtUnix }}}'
 `
 
@@ -503,7 +503,7 @@ func TestTemplatesUseSessionClock(t *testing.T) {
 	if !near(body.Entered, sessionNow) {
 		t.Errorf("webhook nowUnix = %d, want session time at entry %d", body.Entered, sessionNow)
 	}
-	if want := sessionNow + int64(7*24*time.Hour/time.Second); !near(body.At, want) {
+	if want := sessionNow + int64(30*24*time.Hour/time.Second); !near(body.At, want) {
 		t.Errorf(".Webhook.AtUnix = %d, want due time %d", body.At, want)
 	}
 }

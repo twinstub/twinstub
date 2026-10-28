@@ -213,7 +213,7 @@ func validateScenario(cfg *Config, s *Scenario, seen map[string]string, add func
 			}
 			after := time.Duration(a.Webhook.After)
 			if after < 0 || after > HardMaxAfter {
-				add(s.Source, ap+".webhook.after", fmt.Sprintf("after must be between 0 and 7d (got %s)", after))
+				add(s.Source, ap+".webhook.after", fmt.Sprintf("after must be between 0 and 365d (got %s)", after))
 			}
 			if len(a.Webhook.Body) > HardMaxBodySize {
 				add(s.Source, ap+".webhook.body", fmt.Sprintf("body exceeds the %d MB hard limit", HardMaxBodySize>>20))
