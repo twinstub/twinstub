@@ -17,6 +17,22 @@ const (
 // MaxStoredResponseBody caps response bodies kept in the log (spec 7.2).
 const MaxStoredResponseBody = 64 << 10
 
+// Signature states of an attempt.
+const (
+	SignatureValid   = "valid"   // signed with the target's secret
+	SignatureInvalid = "invalid" // deliberately signed with a wrong key
+	SignatureNone    = "none"    // no signature header sent
+)
+
+// Replay modes recorded on a delivery made by an admin replay. Deliveries
+// scheduled by scenarios or the trigger endpoint have no mode.
+const (
+	ModeReplay       = "replay"        // same body (or an edited one), new delivery id
+	ModeDuplicate    = "duplicate"     // byte-identical, including X-TwinStub-Delivery
+	ModeBadSignature = "bad_signature" // signature that does not verify
+	ModeNoSignature  = "no_signature"  // signature header omitted
+)
+
 // Record is one delivery in the log. The structure is intentionally
 // complete: it is the contract for the future commercial delivery journal.
 type Record struct {
@@ -31,6 +47,11 @@ type Record struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	FireAt        time.Time  `json:"fire_at"`
 	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+	Mode          string     `json:"mode,omitempty"`
+	ReplayedFrom  string     `json:"replayed_from,omitempty"`
+	// HeaderID is the X-TwinStub-Delivery value sent when it differs from
+	// ID (a duplicate carries the original delivery's id).
+	HeaderID string `json:"header_id,omitempty"`
 }
 
 type Attempt struct {
@@ -43,6 +64,7 @@ type Attempt struct {
 	ResponseBody    string            `json:"response_body,omitempty"`
 	DurationMillis  int64             `json:"duration_ms"`
 	ResponseTrimmed bool              `json:"response_trimmed,omitempty"`
+	Signature       string            `json:"signature,omitempty"` // valid | invalid | none
 }
 
 // DeliveryLog is a fixed size ring buffer of delivery records.

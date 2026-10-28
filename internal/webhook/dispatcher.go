@@ -29,7 +29,17 @@ type ScheduleRequest struct {
 	Event      string
 	Body       []byte
 	Delay      time.Duration // already scaled by --time-scale
-	NoSign     bool          // admin trigger with "sign": false
+	NoSign     bool          // admin trigger with "sign": false, or replay mode no_signature
+	// BadSign signs with a wrong key: the header is well formed but does
+	// not verify (replay mode bad_signature).
+	BadSign bool
+	// HeaderID, when set, is sent as X-TwinStub-Delivery instead of the new
+	// delivery's own id, making a byte-identical duplicate of an earlier
+	// delivery (replay mode duplicate).
+	HeaderID string
+	// Mode and ReplayedFrom are journal bookkeeping for admin replays.
+	Mode         string
+	ReplayedFrom string
 	// OnFirstAttempt fires exactly once after the first delivery attempt,
 	// regardless of its outcome. The scenario engine uses it for the
 	// post-dispatch goto.
@@ -53,6 +63,8 @@ type delivery struct {
 	event       string
 	body        []byte
 	noSign      bool
+	badSign     bool
+	headerID    string
 	onFirst     func()
 	firstFired  bool
 	attempts    int
@@ -173,21 +185,26 @@ func (d *Dispatcher) Schedule(req ScheduleRequest) string {
 		event:       req.Event,
 		body:        req.Body,
 		noSign:      req.NoSign,
+		badSign:     req.BadSign,
+		headerID:    req.HeaderID,
 		onFirst:     req.OnFirstAttempt,
 		maxAttempts: req.Target.Retry.Attempts,
 		backoff:     time.Duration(req.Target.Retry.Backoff),
 		fireAt:      now.Add(req.Delay),
 	}
 	d.log.Add(&Record{
-		ID:          del.id,
-		SessionID:   del.sessionID,
-		Target:      del.targetName,
-		URL:         del.target.URL,
-		Event:       del.event,
-		RequestBody: string(del.body),
-		Status:      StatusPending,
-		CreatedAt:   now,
-		FireAt:      del.fireAt,
+		ID:           del.id,
+		SessionID:    del.sessionID,
+		Target:       del.targetName,
+		URL:          del.target.URL,
+		Event:        del.event,
+		RequestBody:  string(del.body),
+		Status:       StatusPending,
+		CreatedAt:    now,
+		FireAt:       del.fireAt,
+		Mode:         req.Mode,
+		ReplayedFrom: req.ReplayedFrom,
+		HeaderID:     req.HeaderID,
 	})
 
 	d.mu.Lock()
@@ -360,10 +377,15 @@ func (d *Dispatcher) attempt(del *delivery) (Attempt, string) {
 	var resp *http.Response
 	started := time.Now()
 	headers := map[string]string{}
+	signature := SignatureNone
 	if err == nil {
+		headerID := del.id
+		if del.headerID != "" {
+			headerID = del.headerID
+		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", version.UserAgent())
-		req.Header.Set("X-TwinStub-Delivery", del.id)
+		req.Header.Set("X-TwinStub-Delivery", headerID)
 		req.Header.Set("X-TwinStub-Session", del.sessionID)
 		if del.event != "" {
 			req.Header.Set("X-TwinStub-Event", del.event)
@@ -371,8 +393,14 @@ func (d *Dispatcher) attempt(del *delivery) (Attempt, string) {
 		for k, v := range del.target.Headers {
 			req.Header.Set(k, v)
 		}
-		if del.target.Signing != nil && !del.noSign {
-			req.Header.Set(del.target.Signing.Header, Sign(del.target.Signing, del.body, started))
+		if s := del.target.Signing; s != nil && !del.noSign {
+			signature = SignatureValid
+			if del.badSign {
+				wrong := *s
+				wrong.Secret = s.Secret + ".wrong"
+				s, signature = &wrong, SignatureInvalid
+			}
+			req.Header.Set(s.Header, Sign(s, del.body, started))
 		}
 		for k := range req.Header {
 			headers[k] = req.Header.Get(k)
@@ -387,6 +415,7 @@ func (d *Dispatcher) attempt(del *delivery) (Attempt, string) {
 		At:             started,
 		RequestHeaders: headers,
 		DurationMillis: time.Since(started).Milliseconds(),
+		Signature:      signature,
 	}
 	if off != 0 {
 		v := started.Add(off)

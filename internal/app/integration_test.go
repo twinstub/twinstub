@@ -808,3 +808,122 @@ func TestDeliverOutOfOrder(t *testing.T) {
 		t.Errorf("empty events: %d, want 400", code)
 	}
 }
+
+// signatureMatches reports whether a delivery's signature verifies against
+// the test secret, without failing the test.
+func signatureMatches(h hook) bool {
+	var ts, v1 string
+	for _, part := range strings.Split(h.Headers.Get("X-TwinStub-Signature"), ",") {
+		if s, ok := strings.CutPrefix(part, "t="); ok {
+			ts = s
+		}
+		if s, ok := strings.CutPrefix(part, "v1="); ok {
+			v1 = s
+		}
+	}
+	mac := hmac.New(sha256.New, []byte(intSecret))
+	mac.Write([]byte(ts + "."))
+	mac.Write(h.Body)
+	return v1 != "" && hmac.Equal([]byte(hex.EncodeToString(mac.Sum(nil))), []byte(v1))
+}
+
+func TestReplayModes(t *testing.T) {
+	rc := newReceiver(t)
+	files := projectFiles(rc.srv.URL)
+	files["twinstub.yaml"] = strings.Replace(files["twinstub.yaml"], "targets:\n", "targets:\n  plain:\n    url: "+rc.srv.URL+"\n", 1)
+	a := startApp(t, writeProject(t, files))
+
+	trigger := func(target string) string {
+		t.Helper()
+		code, b := doJSON(t, "POST", a.adminURL()+"/api/v1/trigger", nil, `{"target": "`+target+`", "body": {"event_id": "evt_1"}}`)
+		if code != 202 {
+			t.Fatalf("trigger: %d %s", code, b)
+		}
+		var out struct {
+			DeliveryID string `json:"delivery_id"`
+		}
+		_ = json.Unmarshal(b, &out)
+		return out.DeliveryID
+	}
+	type replayOut struct {
+		DeliveryID string `json:"delivery_id"`
+		Mode       string `json:"mode"`
+		Delivery   struct {
+			Attempts []struct {
+				Signature string `json:"signature"`
+			} `json:"attempts"`
+		} `json:"delivery"`
+	}
+	replay := func(id, body string) (int, replayOut) {
+		t.Helper()
+		code, b := doJSON(t, "POST", a.adminURL()+"/api/v1/deliveries/"+id+"/replay", nil, body)
+		var out replayOut
+		_ = json.Unmarshal(b, &out)
+		return code, out
+	}
+
+	origID := trigger("merchant")
+	orig := rc.wait(t)
+
+	// duplicate: same bytes and the same delivery header, fresh valid signature.
+	code, out := replay(origID, `{"mode": "duplicate", "wait": true}`)
+	if code != 200 || out.Mode != "duplicate" || len(out.Delivery.Attempts) != 1 || out.Delivery.Attempts[0].Signature != "valid" {
+		t.Fatalf("duplicate: %d %+v", code, out)
+	}
+	h := rc.wait(t)
+	if got := h.Headers.Get("X-TwinStub-Delivery"); got != origID {
+		t.Errorf("duplicate delivery header = %s, want the original %s", got, origID)
+	}
+	if string(h.Body) != string(orig.Body) {
+		t.Errorf("duplicate body = %s, want %s", h.Body, orig.Body)
+	}
+	verifySignature(t, h)
+
+	// A duplicate of the duplicate still points at the first delivery.
+	if code, _ := replay(out.DeliveryID, `{"mode": "duplicate", "wait": true}`); code != 200 {
+		t.Fatalf("duplicate of duplicate: %d", code)
+	}
+	if got := rc.wait(t).Headers.Get("X-TwinStub-Delivery"); got != origID {
+		t.Errorf("duplicate of duplicate header = %s, want %s", got, origID)
+	}
+
+	// bad_signature: well formed, does not verify.
+	code, out = replay(origID, `{"mode": "bad_signature", "wait": true}`)
+	if code != 200 || out.Delivery.Attempts[0].Signature != "invalid" {
+		t.Fatalf("bad_signature: %d %+v", code, out)
+	}
+	h = rc.wait(t)
+	if !strings.Contains(h.Headers.Get("X-TwinStub-Signature"), "v1=") {
+		t.Errorf("bad signature is not well formed: %q", h.Headers.Get("X-TwinStub-Signature"))
+	}
+	if signatureMatches(h) {
+		t.Error("bad_signature verified against the real secret")
+	}
+
+	// no_signature: header omitted.
+	code, out = replay(origID, `{"mode": "no_signature", "wait": true}`)
+	if code != 200 || out.Delivery.Attempts[0].Signature != "none" {
+		t.Fatalf("no_signature: %d %+v", code, out)
+	}
+	if sig := rc.wait(t).Headers.Get("X-TwinStub-Signature"); sig != "" {
+		t.Errorf("no_signature sent %q", sig)
+	}
+
+	// Without wait the call returns at once, as before.
+	if code, _ := replay(origID, `{}`); code != 202 {
+		t.Errorf("async replay: %d, want 202", code)
+	}
+	rc.wait(t)
+
+	if code, _ := replay(origID, `{"mode": "duplicate", "body": "{}"}`); code != 400 {
+		t.Errorf("duplicate with an edited body: %d, want 400", code)
+	}
+	if code, _ := replay(origID, `{"mode": "sideways"}`); code != 400 {
+		t.Errorf("unknown mode: %d, want 400", code)
+	}
+	plainID := trigger("plain")
+	rc.wait(t)
+	if code, _ := replay(plainID, `{"mode": "bad_signature"}`); code != 422 {
+		t.Errorf("bad_signature on an unsigned target: %d, want 422", code)
+	}
+}

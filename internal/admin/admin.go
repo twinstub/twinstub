@@ -312,8 +312,8 @@ func (a *API) deliveryDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, rec)
 }
 
-// deliveryReplay resends a logged delivery, optionally with an edited body
-// (Replay and Edit, spec 8).
+// deliveryReplay resends a logged delivery (Replay and Edit, spec 8). The
+// mode picks what the receiver sees; wait returns the first attempt.
 func (a *API) deliveryReplay(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	rec, ok := a.disp.Log().Get(id)
@@ -322,7 +322,10 @@ func (a *API) deliveryReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Body *string `json:"body"`
+		Body    *string `json:"body"`
+		Mode    string  `json:"mode"`
+		Wait    bool    `json:"wait"`
+		Timeout string  `json:"timeout"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeJSON(w, 400, map[string]any{"error": "bad_request", "detail": err.Error()})
@@ -336,18 +339,77 @@ func (a *API) deliveryReplay(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	payload := []byte(rec.RequestBody)
-	if body.Body != nil {
-		payload = []byte(*body.Body)
+	req := webhook.ScheduleRequest{
+		SessionID:    rec.SessionID,
+		TargetName:   rec.Target,
+		Target:       target,
+		Event:        rec.Event,
+		Body:         []byte(rec.RequestBody),
+		ReplayedFrom: id,
 	}
-	newID := a.disp.Schedule(webhook.ScheduleRequest{
-		SessionID:  rec.SessionID,
-		TargetName: rec.Target,
-		Target:     target,
-		Event:      rec.Event,
-		Body:       payload,
-	})
-	writeJSON(w, 202, map[string]any{"delivery_id": newID, "replayed_from": id})
+	if body.Body != nil {
+		req.Body = []byte(*body.Body)
+	}
+	switch body.Mode {
+	case "", "as_is":
+		req.Mode = webhook.ModeReplay
+	case webhook.ModeDuplicate:
+		if body.Body != nil {
+			writeJSON(w, 400, map[string]any{"error": "bad_request", "detail": "a duplicate resends the original bytes; drop \"body\" or use mode as_is"})
+			return
+		}
+		// A duplicate of a duplicate still carries the first delivery's id.
+		req.Mode, req.HeaderID = webhook.ModeDuplicate, rec.ID
+		if rec.HeaderID != "" {
+			req.HeaderID = rec.HeaderID
+		}
+	case webhook.ModeBadSignature:
+		if target.Signing == nil {
+			writeJSON(w, 422, map[string]any{"error": "signing_not_configured", "detail": "target " + rec.Target + " has no signing configured, so there is no signature to break"})
+			return
+		}
+		req.Mode, req.BadSign = webhook.ModeBadSignature, true
+	case webhook.ModeNoSignature:
+		req.Mode, req.NoSign = webhook.ModeNoSignature, true
+	default:
+		writeJSON(w, 400, map[string]any{"error": "bad_mode", "detail": "mode must be as_is, duplicate, bad_signature or no_signature"})
+		return
+	}
+	timeout, ok := parseTimeout(w, body.Timeout)
+	if !ok {
+		return
+	}
+
+	newID := a.disp.Schedule(req)
+	out := map[string]any{"delivery_id": newID, "replayed_from": id, "mode": req.Mode}
+	if !body.Wait {
+		writeJSON(w, 202, out)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	done, ok := a.waitFirstAttempt(ctx, newID)
+	if !ok {
+		out["detail"] = "no attempt finished before the timeout; poll GET /api/v1/deliveries/" + newID
+		writeJSON(w, 202, out)
+		return
+	}
+	out["delivery"] = done
+	writeJSON(w, 200, out)
+}
+
+// waitFirstAttempt polls the journal until a delivery has an attempt.
+func (a *API) waitFirstAttempt(ctx context.Context, id string) (webhook.Record, bool) {
+	for {
+		if rec, ok := a.disp.Log().Get(id); ok && (len(rec.Attempts) > 0 || rec.Status == webhook.StatusCanceled) {
+			return rec, true
+		}
+		select {
+		case <-ctx.Done():
+			return webhook.Record{}, false
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 // trigger sends a one-off webhook outside any scenario.

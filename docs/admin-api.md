@@ -164,9 +164,29 @@ carry `virtual_at`, the session time of the attempt; `at` stays wall-clock.
 
 `GET /api/v1/deliveries/{id}` - one full record.
 
-`POST /api/v1/deliveries/{id}/replay` - resend. The optional body
-`{"body": "..."}` replaces the payload (Replay and Edit). Returns 202 with
-the new delivery id. The replay is re-signed at send time.
+`POST /api/v1/deliveries/{id}/replay` - resend. Returns 202 with the new
+delivery id; the replay is re-signed at send time and never moves the
+session's state. Optional body:
+
+```json
+{"mode": "duplicate", "wait": true, "timeout": "30s"}
+```
+
+| `mode` | What the receiver gets |
+|---|---|
+| `as_is` (default) | the same body, or `body` if given (Replay and Edit), under a new delivery id |
+| `duplicate` | a byte-identical repeat: same body and the same `X-TwinStub-Delivery`, `-Event` and `-Session` as the original, with a fresh signature, the way provider retries look. A duplicate of a duplicate still carries the first id. `body` is not allowed |
+| `bad_signature` | a well-formed signature that does not verify (`422 signing_not_configured` for an unsigned target) |
+| `no_signature` | no signature header at all |
+
+With `"wait": true` the call waits for the first attempt (up to `timeout`,
+default `60s`) and returns `200` with the whole record under `delivery`,
+including the receiver's status code and response body.
+
+Journal records made by a replay carry `mode` (`replay`, `duplicate`,
+`bad_signature`, `no_signature`) and `replayed_from`; `header_id` shows the
+`X-TwinStub-Delivery` value when it differs from the record id. Every
+attempt carries `signature`: `valid`, `invalid` or `none`.
 
 ## Trigger
 

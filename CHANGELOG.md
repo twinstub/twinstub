@@ -24,6 +24,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now, in a given order, to stage races such as "completed arrives before
   pending". Items are event names or delivery ids; the session clock does
   not move.
+- Replay modes: `duplicate` (byte-identical, including
+  `X-TwinStub-Delivery`), `bad_signature` (well formed, does not verify) and
+  `no_signature`, next to the default `as_is`. `"wait": true` returns the
+  receiver's answer. Journal records carry `mode`, `replayed_from` and
+  `header_id`; every attempt carries `signature` (`valid`, `invalid`,
+  `none`).
 
 ### Changed
 
