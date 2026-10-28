@@ -420,9 +420,31 @@ func parseTimeout(w http.ResponseWriter, raw string) (time.Duration, bool) {
 }
 
 func (a *API) deliveries(w http.ResponseWriter, r *http.Request) {
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	list := a.disp.Log().List(r.URL.Query().Get("session"), r.URL.Query().Get("target"), limit)
-	writeJSON(w, 200, map[string]any{"deliveries": list, "count": len(list)})
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	status := q.Get("status")
+	switch status {
+	case "", webhook.StatusPending, webhook.StatusRetrying, webhook.StatusDelivered, webhook.StatusFailed, webhook.StatusCanceled:
+	default:
+		writeJSON(w, 400, map[string]any{"error": "bad_status", "detail": "status must be pending, retrying, delivered, failed or canceled"})
+		return
+	}
+	list, next, err := a.disp.Log().Page(webhook.Query{
+		SessionID: q.Get("session"),
+		Target:    q.Get("target"),
+		Status:    status,
+		Limit:     limit,
+		Cursor:    q.Get("cursor"),
+	})
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "cursor_expired", "detail": err.Error()})
+		return
+	}
+	out := map[string]any{"deliveries": list, "count": len(list)}
+	if next != "" {
+		out["next_cursor"] = next
+	}
+	writeJSON(w, 200, out)
 }
 
 func (a *API) deliveryDetail(w http.ResponseWriter, r *http.Request) {

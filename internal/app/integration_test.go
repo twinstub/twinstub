@@ -1136,3 +1136,43 @@ func TestAdminReset(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+func TestDeliveriesPagingAndStatus(t *testing.T) {
+	rc := newReceiver(t)
+	a := startApp(t, writeProject(t, projectFiles(rc.srv.URL)))
+	for i := 0; i < 3; i++ {
+		doJSON(t, "POST", a.adminURL()+"/api/v1/trigger", nil, `{"target": "merchant", "body": {}}`)
+		rc.wait(t)
+	}
+	waitDelivered := func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, b := doJSON(t, "GET", a.adminURL()+"/api/v1/deliveries?status=delivered", nil, ""); strings.Contains(string(b), `"count": 3`) {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatal("deliveries never all reached delivered")
+	}
+	waitDelivered()
+
+	_, b := doJSON(t, "GET", a.adminURL()+"/api/v1/deliveries?limit=2", nil, "")
+	var page struct {
+		Count      int    `json:"count"`
+		NextCursor string `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(b, &page); err != nil || page.Count != 2 || page.NextCursor == "" {
+		t.Fatalf("first page: %s", b)
+	}
+	_, b = doJSON(t, "GET", a.adminURL()+"/api/v1/deliveries?limit=2&cursor="+page.NextCursor, nil, "")
+	page.NextCursor = ""
+	if err := json.Unmarshal(b, &page); err != nil || page.Count != 1 || page.NextCursor != "" {
+		t.Errorf("last page: %s", b)
+	}
+	if code, _ := doJSON(t, "GET", a.adminURL()+"/api/v1/deliveries?status=lost", nil, ""); code != 400 {
+		t.Errorf("bad status: %d, want 400", code)
+	}
+	if code, _ := doJSON(t, "GET", a.adminURL()+"/api/v1/deliveries?cursor=gone", nil, ""); code != 400 {
+		t.Errorf("expired cursor: %d, want 400", code)
+	}
+}

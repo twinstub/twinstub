@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
@@ -114,28 +115,55 @@ func (l *DeliveryLog) Get(id string) (Record, bool) {
 	return copyRecord(r), true
 }
 
-// List returns records newest first, optionally filtered.
-func (l *DeliveryLog) List(sessionID, target string, limit int) []Record {
+// Query selects journal records. Empty fields match everything.
+type Query struct {
+	SessionID string
+	Target    string
+	Status    string
+	Limit     int    // <= 0 means no limit
+	Cursor    string // id of the last record of the previous page
+}
+
+// ErrCursorExpired means the cursor's record has rotated out of the ring.
+var ErrCursorExpired = errors.New("the cursor's record is no longer in the journal; start again without a cursor")
+
+// Page returns matching records newest first and the cursor of the next
+// page, which is empty when nothing more matches.
+func (l *DeliveryLog) Page(q Query) ([]Record, string, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	if limit <= 0 || limit > l.count {
-		limit = l.count
-	}
-	out := make([]Record, 0, limit)
-	for i := 0; i < l.count && len(out) < limit; i++ {
-		idx := (l.next - 1 - i + l.size*2) % l.size
-		r := l.ring[idx]
+	out := make([]Record, 0)
+	started := q.Cursor == ""
+	next := ""
+	for i := 0; i < l.count; i++ {
+		r := l.ring[(l.next-1-i+l.size*2)%l.size]
 		if r == nil {
 			continue
 		}
-		if sessionID != "" && r.SessionID != sessionID {
+		if !started {
+			started = r.ID == q.Cursor
 			continue
 		}
-		if target != "" && r.Target != target {
+		if (q.SessionID != "" && r.SessionID != q.SessionID) ||
+			(q.Target != "" && r.Target != q.Target) ||
+			(q.Status != "" && r.Status != q.Status) {
 			continue
+		}
+		if q.Limit > 0 && len(out) == q.Limit {
+			next = out[len(out)-1].ID
+			break
 		}
 		out = append(out, copyRecord(r))
 	}
+	if !started {
+		return nil, "", ErrCursorExpired
+	}
+	return out, next, nil
+}
+
+// List returns records newest first, optionally filtered.
+func (l *DeliveryLog) List(sessionID, target string, limit int) []Record {
+	out, _, _ := l.Page(Query{SessionID: sessionID, Target: target, Limit: limit})
 	return out
 }
 

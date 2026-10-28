@@ -39,6 +39,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   explained.
 - `POST /api/v1/reset` deletes every session and queued webhook and, by
   default, clears the delivery journal and the 404 log.
+- `GET /api/v1/deliveries` filters by `status` and pages with `limit`,
+  `next_cursor` and `cursor`.
 - `POST /api/v1/sessions` starts a session without a request from the app,
   optionally directly in a given state.
 - Session transition history in session details: the last 100 state

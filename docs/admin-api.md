@@ -200,8 +200,11 @@ curl -X POST localhost:9090/api/v1/sessions/01JF.../deliver \
 
 ## Deliveries
 
-`GET /api/v1/deliveries?session=&target=&limit=` - the delivery journal,
-newest first. Each record carries the full request (headers per attempt,
+`GET /api/v1/deliveries?session=&target=&status=&limit=&cursor=` - the
+delivery journal, newest first. `status` filters by `pending`, `retrying`,
+`delivered`, `failed` or `canceled`. With `limit`, a response that has more
+behind it carries `next_cursor`; pass it as `cursor` for the next page
+(`400 cursor_expired` if that record has rotated out of the journal). Each record carries the full request (headers per attempt,
 body), every attempt with status code, response body (truncated to 64 KB)
 and timing, and the final status: `pending`, `retrying`, `delivered`,
 `failed` or `canceled`. Attempts in a session whose clock was advanced also

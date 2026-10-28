@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -405,5 +406,47 @@ func TestDeliveryLogClear(t *testing.T) {
 	l.Add(&Record{ID: "c"})
 	if got := l.List("", "", 0); len(got) != 1 || got[0].ID != "c" {
 		t.Errorf("after Clear and Add: %+v", got)
+	}
+}
+
+func TestDeliveryLogPaging(t *testing.T) {
+	l := NewDeliveryLog(10)
+	statuses := []string{StatusDelivered, StatusFailed, StatusDelivered, StatusFailed, StatusDelivered}
+	for i, st := range statuses {
+		l.Add(&Record{ID: fmt.Sprintf("d%d", i+1), Status: st, SessionID: "s1"})
+	}
+
+	// Pages of two, newest first, until the cursor runs out.
+	var pages [][]string
+	cursor := ""
+	for {
+		got, next, err := l.Page(Query{Limit: 2, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages = append(pages, ids(got))
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	want := [][]string{{"d5", "d4"}, {"d3", "d2"}, {"d1"}}
+	if len(pages) != len(want) {
+		t.Fatalf("pages = %v, want %v", pages, want)
+	}
+	for i := range want {
+		if !equal(pages[i], want[i]) {
+			t.Errorf("page %d = %v, want %v", i, pages[i], want[i])
+		}
+	}
+
+	// The cursor of a full last page is empty when nothing more matches.
+	got, next, _ := l.Page(Query{Status: StatusFailed, Limit: 2})
+	if !equal(ids(got), []string{"d4", "d2"}) || next != "" {
+		t.Errorf("failed only = %v next %q", ids(got), next)
+	}
+
+	if _, _, err := l.Page(Query{Cursor: "gone"}); !errors.Is(err, ErrCursorExpired) {
+		t.Errorf("unknown cursor: %v, want ErrCursorExpired", err)
 	}
 }
