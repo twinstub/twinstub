@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -101,8 +102,23 @@ func New(opts Options) (*App, error) {
 	a.publicSrv = &http.Server{Handler: pub.Handler()}
 
 	if cfg.Server.Admin.IsEnabled() {
-		adm := admin.New(a.Snapshot, a.engine, a.dispatcher, a.Reload, cfg.Server.Admin.Token,
-			a.logger.With().Str("component", "admin").Logger())
+		configPath := opts.ConfigPath
+		if abs, err := filepath.Abs(configPath); err == nil {
+			configPath = abs
+		}
+		adm := admin.New(admin.Options{
+			Snapshot:   a.Snapshot,
+			Engine:     a.engine,
+			Dispatcher: a.dispatcher,
+			Reload:     a.Reload,
+			Token:      cfg.Server.Admin.Token,
+			Logger:     a.logger.With().Str("component", "admin").Logger(),
+			ConfigPath: configPath,
+			TimeScale:  opts.TimeScale,
+			Seed:       opts.Seed,
+			Seeded:     opts.Seeded,
+			PublicPort: a.PublicPort,
+		})
 		a.adminSrv = &http.Server{Handler: adm.Handler()}
 	}
 	return a, nil

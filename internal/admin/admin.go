@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -30,6 +31,23 @@ const (
 	maxAdvanceTimeout     = 10 * time.Minute
 )
 
+// Options wires the admin API to the running engine.
+type Options struct {
+	Snapshot   func() *snapshot.Snapshot
+	Engine     *engine.Engine
+	Dispatcher *webhook.Dispatcher
+	Reload     func() error
+	Token      string
+	Logger     zerolog.Logger
+
+	// Runtime facts reported by /health.
+	ConfigPath string
+	TimeScale  float64
+	Seed       uint64
+	Seeded     bool
+	PublicPort func() int // known only once the listener is bound
+}
+
 type API struct {
 	snap    func() *snapshot.Snapshot
 	engine  *engine.Engine
@@ -38,17 +56,19 @@ type API struct {
 	token   string
 	started time.Time
 	logger  zerolog.Logger
+	opts    Options
 }
 
-func New(snap func() *snapshot.Snapshot, eng *engine.Engine, disp *webhook.Dispatcher, reload func() error, token string, logger zerolog.Logger) *API {
+func New(opts Options) *API {
 	return &API{
-		snap:    snap,
-		engine:  eng,
-		disp:    disp,
-		reload:  reload,
-		token:   token,
+		snap:    opts.Snapshot,
+		engine:  opts.Engine,
+		disp:    opts.Dispatcher,
+		reload:  opts.Reload,
+		token:   opts.Token,
 		started: time.Now(),
-		logger:  logger,
+		logger:  opts.Logger,
+		opts:    opts,
 	}
 }
 
@@ -88,29 +108,61 @@ func (a *API) auth(next http.Handler) http.Handler {
 }
 
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{
+	out := map[string]any{
 		"status":         "ok",
 		"version":        version.Version,
 		"commit":         version.Commit,
 		"uptime_seconds": int(time.Since(a.started).Seconds()),
 		"config_version": a.snap().Version,
-	})
+		"config_path":    a.opts.ConfigPath,
+		"time_scale":     a.opts.TimeScale,
+		"sessions":       a.engine.Store.Len(),
+	}
+	if a.opts.Seeded {
+		out["seed"] = a.opts.Seed
+	}
+	if a.opts.PublicPort != nil {
+		out["public_port"] = a.opts.PublicPort()
+	}
+	writeJSON(w, 200, out)
 }
 
+// scenarios describes the loaded config: every scenario with its rules and
+// webhooks as flat lists, plus stateless endpoints and webhook targets.
+// ?id= narrows it to one scenario.
 func (a *API) scenarios(w http.ResponseWriter, r *http.Request) {
 	snap := a.snap()
-	type scenario struct {
-		ID            string   `json:"id"`
-		Description   string   `json:"description,omitempty"`
-		States        []string `json:"states"`
-		Initial       string   `json:"initial"`
-		SessionKey    string   `json:"session_key"`
-		TTL           string   `json:"ttl"`
-		ConfigVersion int      `json:"config_version"`
+	type rule struct {
+		State  string `json:"state"`
+		Method string `json:"method"`
+		Path   string `json:"path"`
+		Goto   string `json:"goto,omitempty"`
 	}
+	type webhookDef struct {
+		State  string `json:"state"`
+		Target string `json:"target"`
+		Event  string `json:"event,omitempty"`
+		After  string `json:"after"`
+		Goto   string `json:"goto,omitempty"`
+	}
+	type scenario struct {
+		ID            string       `json:"id"`
+		Description   string       `json:"description,omitempty"`
+		States        []string     `json:"states"`
+		Initial       string       `json:"initial"`
+		SessionKey    string       `json:"session_key"`
+		TTL           string       `json:"ttl"`
+		ConfigVersion int          `json:"config_version"`
+		Rules         []rule       `json:"rules"`
+		Webhooks      []webhookDef `json:"webhooks"`
+	}
+	filter := r.URL.Query().Get("id")
 	out := make([]scenario, 0, len(snap.Scenarios))
 	for _, s := range snap.Scenarios {
-		out = append(out, scenario{
+		if filter != "" && s.ID != filter {
+			continue
+		}
+		sc := scenario{
 			ID:            s.ID,
 			Description:   s.Description,
 			States:        s.StateNames,
@@ -118,9 +170,50 @@ func (a *API) scenarios(w http.ResponseWriter, r *http.Request) {
 			SessionKey:    s.KeySelector.String(),
 			TTL:           s.TTL.String(),
 			ConfigVersion: snap.Version,
-		})
+			Rules:         []rule{},
+			Webhooks:      []webhookDef{},
+		}
+		for _, name := range s.StateNames {
+			st := s.States[name]
+			for _, rl := range st.On {
+				sc.Rules = append(sc.Rules, rule{State: name, Method: rl.Matcher.Method, Path: rl.Matcher.PathSpec, Goto: rl.Goto})
+			}
+			for _, ac := range st.Enter {
+				sc.Webhooks = append(sc.Webhooks, webhookDef{State: name, Target: ac.TargetName, Event: ac.Event, After: xtime.Format(ac.After), Goto: ac.Goto})
+			}
+		}
+		out = append(out, sc)
 	}
-	writeJSON(w, 200, map[string]any{"scenarios": out})
+	if filter != "" && len(out) == 0 {
+		known := make([]string, 0, len(snap.Scenarios))
+		for _, s := range snap.Scenarios {
+			known = append(known, s.ID)
+		}
+		writeJSON(w, 404, map[string]any{"error": "scenario_not_found", "id": filter, "known_scenarios": known})
+		return
+	}
+
+	type endpoint struct {
+		ID     string `json:"id"`
+		Method string `json:"method"`
+		Path   string `json:"path"`
+	}
+	endpoints := make([]endpoint, 0, len(snap.Endpoints))
+	for _, ep := range snap.Endpoints {
+		endpoints = append(endpoints, endpoint{ID: ep.ID, Method: ep.Matcher.Method, Path: ep.Matcher.PathSpec})
+	}
+	type target struct {
+		Name   string `json:"name"`
+		URL    string `json:"url"`
+		Signed bool   `json:"signed"`
+	}
+	targets := make([]target, 0, len(snap.Config.Targets))
+	for name, t := range snap.Config.Targets {
+		targets = append(targets, target{Name: name, URL: t.URL, Signed: t.Signing != nil})
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+
+	writeJSON(w, 200, map[string]any{"scenarios": out, "endpoints": endpoints, "targets": targets})
 }
 
 func (a *API) sessions(w http.ResponseWriter, r *http.Request) {

@@ -27,3 +27,12 @@ func ParseDuration(s string) (time.Duration, error) {
 	}
 	return d, nil
 }
+
+// Format renders a duration the way the DSL writes it: whole days as "30d",
+// anything else in the standard library form ("3s", "1h30m0s").
+func Format(d time.Duration) string {
+	if d != 0 && d%(24*time.Hour) == 0 {
+		return strconv.FormatInt(int64(d/(24*time.Hour)), 10) + "d"
+	}
+	return d.String()
+}

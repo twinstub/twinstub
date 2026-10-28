@@ -976,3 +976,79 @@ func TestAdminStartSession(t *testing.T) {
 		}
 	}
 }
+
+// /health and /scenarios give an agent what it needs to drive the engine:
+// where the app should point, and the shape of every scenario.
+func TestAdminDescribe(t *testing.T) {
+	rc := newReceiver(t)
+	a := startApp(t, writeProject(t, projectFiles(rc.srv.URL)))
+
+	_, b := doJSON(t, "GET", a.adminURL()+"/api/v1/health", nil, "")
+	var health struct {
+		ConfigPath string  `json:"config_path"`
+		PublicPort int     `json:"public_port"`
+		TimeScale  float64 `json:"time_scale"`
+		Seed       *uint64 `json:"seed"`
+		Sessions   int     `json:"sessions"`
+	}
+	if err := json.Unmarshal(b, &health); err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(health.ConfigPath) || filepath.Base(health.ConfigPath) != "twinstub.yaml" {
+		t.Errorf("config_path = %q", health.ConfigPath)
+	}
+	if health.PublicPort != a.PublicPort() || health.TimeScale != 0.01 || health.Seed == nil || *health.Seed != 42 || health.Sessions != 0 {
+		t.Errorf("health = %s", b)
+	}
+
+	_, b = doJSON(t, "GET", a.adminURL()+"/api/v1/scenarios", nil, "")
+	var desc struct {
+		Scenarios []struct {
+			ID    string `json:"id"`
+			Rules []struct {
+				State, Method, Path, Goto string
+			} `json:"rules"`
+			Webhooks []struct {
+				State, Target, Event, After, Goto string
+			} `json:"webhooks"`
+		} `json:"scenarios"`
+		Endpoints []struct {
+			ID, Method, Path string
+		} `json:"endpoints"`
+		Targets []struct {
+			Name   string `json:"name"`
+			Signed bool   `json:"signed"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(b, &desc); err != nil || len(desc.Scenarios) != 1 {
+		t.Fatalf("scenarios: %s", b)
+	}
+	sc := desc.Scenarios[0]
+	foundRule, foundHook := false, false
+	for _, r := range sc.Rules {
+		if r.State == "new" && r.Method == "POST" && r.Path == "/v1/payments" && r.Goto == "processing" {
+			foundRule = true
+		}
+	}
+	for _, h := range sc.Webhooks {
+		if h.State == "processing" && h.Target == "merchant" && h.Event == "payment.succeeded" && h.After == "10s" && h.Goto == "succeeded" {
+			foundHook = true
+		}
+	}
+	if !foundRule || !foundHook {
+		t.Errorf("scenario detail = %+v", sc)
+	}
+	if len(desc.Endpoints) != 1 || desc.Endpoints[0].ID != "ping" {
+		t.Errorf("endpoints = %+v", desc.Endpoints)
+	}
+	if len(desc.Targets) != 1 || desc.Targets[0].Name != "merchant" || !desc.Targets[0].Signed {
+		t.Errorf("targets = %+v", desc.Targets)
+	}
+
+	if code, _ := doJSON(t, "GET", a.adminURL()+"/api/v1/scenarios?id=payment.chargeback", nil, ""); code != 200 {
+		t.Errorf("filter by id: %d", code)
+	}
+	if code, _ := doJSON(t, "GET", a.adminURL()+"/api/v1/scenarios?id=ghost", nil, ""); code != 404 {
+		t.Errorf("unknown id: %d, want 404", code)
+	}
+}

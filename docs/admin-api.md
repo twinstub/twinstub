@@ -13,13 +13,21 @@ local-development default). All responses are JSON.
 `GET /api/v1/health`
 
 ```json
-{"status": "ok", "version": "1.0.0", "commit": "abc1234",
- "uptime_seconds": 42, "config_version": 3}
+{"status": "ok", "version": "1.1.0", "commit": "abc1234",
+ "uptime_seconds": 42, "config_version": 3,
+ "config_path": "/home/me/project/twinstub.yaml", "public_port": 8080,
+ "time_scale": 1, "seed": 42, "sessions": 2}
 ```
+
+`public_port` is where your app should send its provider calls. `seed` is
+present only when the engine runs with `--seed`.
 
 ## Scenarios
 
-`GET /api/v1/scenarios` - scenarios of the currently loaded config.
+`GET /api/v1/scenarios` - the currently loaded config: every scenario
+with its rules and webhooks as flat lists, plus stateless endpoints and
+webhook targets. `?id=<scenario>` narrows it to one scenario (`404` if
+unknown).
 
 ```json
 {"scenarios": [{
@@ -29,8 +37,18 @@ local-development default). All responses are JSON.
   "initial": "new",
   "session_key": "body:$.order_id",
   "ttl": "30m0s",
-  "config_version": 3
-}]}
+  "config_version": 3,
+  "rules": [
+    {"state": "new", "method": "POST", "path": "/v1/payments", "goto": "processing"},
+    {"state": "processing", "method": "GET", "path": "/v1/payments/{id}"}
+  ],
+  "webhooks": [
+    {"state": "processing", "target": "merchant_callback", "event": "payment.succeeded", "after": "3s", "goto": "succeeded"},
+    {"state": "succeeded", "target": "merchant_callback", "event": "payment.chargeback", "after": "30d", "goto": "chargeback"}
+  ]
+}],
+ "endpoints": [{"id": "get_rates", "method": "GET", "path": "/v1/rates"}],
+ "targets": [{"name": "merchant_callback", "url": "http://localhost:9999/webhook", "signed": true}]}
 ```
 
 ## Sessions
