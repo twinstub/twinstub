@@ -143,6 +143,7 @@ func (a *API) sessionDetail(w http.ResponseWriter, r *http.Request) {
 		"session":          sess.View(),
 		"virtual_now":      time.Now().Add(off),
 		"clock_offset":     off.String(),
+		"history":          sess.HistoryView(),
 		"pending_webhooks": a.disp.PendingForSession(id),
 	})
 }

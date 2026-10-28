@@ -102,7 +102,7 @@ func (e *Engine) Handle(snap *snapshot.Snapshot, r *match.Request, scenarioHeade
 		}
 		var created bool
 		var err error
-		sess, created, err = e.createSession(snap, sc, key)
+		sess, created, err = e.createSession(snap, sc, key, sc.Initial, r.Method+" "+r.Path)
 		if err != nil {
 			return Outcome{Err: &ErrorReply{Status: 429, Body: map[string]any{
 				"error":  "session_limit_reached",
@@ -149,14 +149,14 @@ func (e *Engine) findSession(snap *snapshot.Snapshot, r *match.Request) *Session
 	return nil
 }
 
-func (e *Engine) createSession(snap *snapshot.Snapshot, sc *snapshot.Scenario, key string) (*Session, bool, error) {
+func (e *Engine) createSession(snap *snapshot.Snapshot, sc *snapshot.Scenario, key, start, detail string) (*Session, bool, error) {
 	now := time.Now()
 	sess := &Session{
 		ID:            e.newID(),
 		Key:           key,
 		Scenario:      sc,
 		ConfigVersion: snap.Version,
-		State:         sc.Initial,
+		State:         start,
 		Vars:          map[string]string{},
 		CreatedAt:     now,
 		ExpiresAt:     now.Add(sc.TTL),
@@ -166,8 +166,9 @@ func (e *Engine) createSession(snap *snapshot.Snapshot, sc *snapshot.Scenario, k
 		return nil, false, err
 	}
 	if created {
-		// Enter actions of the initial state run at session creation.
+		// Enter actions of the starting state run at session creation.
 		sess.mu.Lock()
+		sess.recordLocked(Transition{To: start, At: now, VirtualAt: now, Cause: CauseCreated, Detail: detail})
 		e.runEnterLocked(sess, &tmpl.RequestCtx{})
 		sess.mu.Unlock()
 	}
@@ -225,7 +226,7 @@ func (e *Engine) handleInSession(sess *Session, r *match.Request) Outcome {
 			State:      sess.State,
 		}
 		if rule.Goto != "" {
-			e.enterStateLocked(sess, rule.Goto, &ctx.Request)
+			e.enterStateLocked(sess, rule.Goto, &ctx.Request, CauseRequest, r.Method+" "+r.Path)
 			out.State = sess.State
 		}
 		return out
@@ -250,7 +251,13 @@ func templateError(err error) *ErrorReply {
 
 // enterStateLocked transitions the session and schedules enter actions.
 // Caller holds sess.mu.
-func (e *Engine) enterStateLocked(sess *Session, state string, reqCtx *tmpl.RequestCtx) {
+func (e *Engine) enterStateLocked(sess *Session, state string, reqCtx *tmpl.RequestCtx, cause, detail string) {
+	now := time.Now()
+	sess.recordLocked(Transition{
+		From: sess.State, To: state,
+		At: now, VirtualAt: now.Add(e.sched.ClockOffset(sess.ID)),
+		Cause: cause, Detail: detail,
+	})
 	sess.State = state
 	sess.Epoch++
 	e.logger.Debug().Str("session", sess.ID).Str("state", state).Msg("state entered")
@@ -288,8 +295,8 @@ func (e *Engine) runEnterLocked(sess *Session, reqCtx *tmpl.RequestCtx) {
 		}
 		var onFirst func()
 		if g := action.Goto; g != "" {
-			sid := sess.ID
-			onFirst = func() { e.advance(sid, epoch, g) }
+			sid, event := sess.ID, action.Event
+			onFirst = func() { e.advance(sid, epoch, g, event) }
 		}
 		id := e.sched.Schedule(webhook.ScheduleRequest{
 			SessionID:      sess.ID,
@@ -308,7 +315,7 @@ func (e *Engine) runEnterLocked(sess *Session, reqCtx *tmpl.RequestCtx) {
 
 // advance applies a post-dispatch goto. It is a no-op when the session has
 // moved to another state since the webhook was scheduled.
-func (e *Engine) advance(sessionID string, epoch uint64, state string) {
+func (e *Engine) advance(sessionID string, epoch uint64, state, event string) {
 	sess := e.Store.GetByID(sessionID)
 	if sess == nil {
 		return
@@ -318,7 +325,7 @@ func (e *Engine) advance(sessionID string, epoch uint64, state string) {
 	if sess.Epoch != epoch {
 		return
 	}
-	e.enterStateLocked(sess, state, &tmpl.RequestCtx{})
+	e.enterStateLocked(sess, state, &tmpl.RequestCtx{}, CauseWebhook, event)
 }
 
 // AdvanceTo is the admin API forced transition. Enter actions run.
@@ -333,7 +340,7 @@ func (e *Engine) AdvanceTo(sessionID, state string) error {
 		return fmt.Errorf("scenario %q has no state %q", sess.Scenario.ID, state)
 	}
 	sess.touchLocked(time.Now())
-	e.enterStateLocked(sess, state, &tmpl.RequestCtx{})
+	e.enterStateLocked(sess, state, &tmpl.RequestCtx{}, CauseAdmin, "")
 	return nil
 }
 

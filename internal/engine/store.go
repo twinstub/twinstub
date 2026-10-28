@@ -24,10 +24,47 @@ type Session struct {
 	Epoch     uint64
 	CreatedAt time.Time
 	ExpiresAt time.Time
+	// History holds the most recent state changes, oldest first.
+	History []Transition
+}
+
+// Transition causes.
+const (
+	CauseCreated = "created" // the session started in this state
+	CauseRequest = "request" // a scenario rule matched a request
+	CauseWebhook = "webhook" // the first attempt of a webhook fired its goto
+	CauseAdmin   = "admin"   // forced through the admin API
+)
+
+// maxHistory bounds the transition history kept per session.
+const maxHistory = 100
+
+// Transition is one state change of a session.
+type Transition struct {
+	From      string    `json:"from,omitempty"`
+	To        string    `json:"to"`
+	At        time.Time `json:"at"`         // wall clock
+	VirtualAt time.Time `json:"virtual_at"` // session time
+	Cause     string    `json:"cause"`
+	Detail    string    `json:"detail,omitempty"` // the request line or the webhook event
 }
 
 func (s *Session) touchLocked(now time.Time) {
 	s.ExpiresAt = now.Add(s.Scenario.TTL)
+}
+
+func (s *Session) recordLocked(t Transition) {
+	s.History = append(s.History, t)
+	if n := len(s.History); n > maxHistory {
+		s.History = append([]Transition(nil), s.History[n-maxHistory:]...)
+	}
+}
+
+// HistoryView copies the transition history for the admin API.
+func (s *Session) HistoryView() []Transition {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Transition{}, s.History...)
 }
 
 // SessionView is an immutable copy for the admin API.

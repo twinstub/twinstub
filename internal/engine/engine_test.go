@@ -536,3 +536,54 @@ func TestTouch(t *testing.T) {
 		t.Error("Touch reported a missing session as live")
 	}
 }
+
+func TestTransitionHistory(t *testing.T) {
+	snap := testSnapshot(t, testConfig)
+	eng, sched := testEngine(t, 100)
+
+	eng.Handle(snap, postPayment("ord_h", 1), "payment.chargeback")
+	sched.last(t).OnFirstAttempt() // webhook goto: processing -> succeeded
+	sess := eng.Store.List()[0]
+	if err := eng.AdvanceTo(sess.ID, "new"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []Transition{
+		{From: "", To: "new", Cause: CauseCreated, Detail: "POST /v1/payments"},
+		{From: "new", To: "processing", Cause: CauseRequest, Detail: "POST /v1/payments"},
+		{From: "processing", To: "succeeded", Cause: CauseWebhook, Detail: "payment.succeeded"},
+		{From: "succeeded", To: "new", Cause: CauseAdmin},
+	}
+	got := sess.HistoryView()
+	if len(got) != len(want) {
+		t.Fatalf("history = %+v", got)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.From != w.From || g.To != w.To || g.Cause != w.Cause || g.Detail != w.Detail {
+			t.Errorf("history[%d] = %+v, want %+v", i, g, w)
+		}
+		if g.At.IsZero() || g.VirtualAt.IsZero() {
+			t.Errorf("history[%d] has no time: %+v", i, g)
+		}
+	}
+}
+
+func TestTransitionHistoryIsBounded(t *testing.T) {
+	snap := testSnapshot(t, testConfig)
+	eng, _ := testEngine(t, 100)
+	eng.Handle(snap, postPayment("ord_b", 1), "payment.chargeback")
+	sess := eng.Store.List()[0]
+	for i := 0; i < maxHistory+20; i++ {
+		if err := eng.AdvanceTo(sess.ID, "succeeded"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := sess.HistoryView()
+	if len(got) != maxHistory {
+		t.Fatalf("history length = %d, want %d", len(got), maxHistory)
+	}
+	if last := got[len(got)-1]; last.Cause != CauseAdmin || last.To != "succeeded" {
+		t.Errorf("newest entry = %+v", last)
+	}
+}

@@ -54,6 +54,11 @@ after a hot reload old sessions keep finishing on their original version.
 ```json
 {"session": {...},
  "virtual_now": "2026-11-27T10:00:00Z", "clock_offset": "720h0m0s",
+ "history": [
+   {"to": "new", "at": "...", "virtual_at": "...", "cause": "created", "detail": "POST /v1/payments"},
+   {"from": "new", "to": "processing", "at": "...", "virtual_at": "...", "cause": "request", "detail": "POST /v1/payments"},
+   {"from": "processing", "to": "succeeded", "at": "...", "virtual_at": "...", "cause": "webhook", "detail": "payment.succeeded"}
+ ],
  "pending_webhooks": [{
    "delivery_id": "01JF...", "target": "merchant_callback",
    "event": "payment.chargeback", "fire_at": "...", "attempts": 0
@@ -62,6 +67,12 @@ after a hot reload old sessions keep finishing on their original version.
 
 `virtual_now` and `fire_at` are in session time (see Session time below);
 they equal wall-clock time unless the session clock was advanced.
+
+`history` lists the most recent 100 state changes, oldest first. `cause`
+is `created` (the session started in that state), `request` (a scenario
+rule matched; `detail` is the request line), `webhook` (the first attempt of
+a webhook fired its `goto`; `detail` is the event) or `admin` (a forced
+transition). `at` is wall-clock time, `virtual_at` session time.
 
 `DELETE /api/v1/sessions/{id}` - reset the session and cancel its queued
 webhooks. Frees the session key immediately.
