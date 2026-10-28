@@ -49,6 +49,22 @@ local-development default). All responses are JSON.
 `config_version` shows which config snapshot the session is pinned to;
 after a hot reload old sessions keep finishing on their original version.
 
+`POST /api/v1/sessions` - start a session without waiting for a request
+from your app, optionally directly in a given state:
+
+```sh
+curl -X POST localhost:9090/api/v1/sessions \
+  -d '{"scenario": "payment.chargeback", "key": "ord_42", "state": "processing"}'
+```
+
+`key` must be the value the scenario's session key selector extracts from
+your app's requests (here the order id), so the app's next request joins
+this session. With `state`, the session starts there and that state's
+enter actions run; the initial state's do not. Returns `201` with the
+session, or `200` with the existing one if the key already has a session of
+the same scenario. `409 session_conflict` if the key belongs to another
+scenario, `422` for an unknown scenario or state, `400` without a key.
+
 `GET /api/v1/sessions/{id}` - details plus queued webhooks:
 
 ```json

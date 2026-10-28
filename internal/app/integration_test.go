@@ -927,3 +927,52 @@ func TestReplayModes(t *testing.T) {
 		t.Errorf("bad_signature on an unsigned target: %d, want 422", code)
 	}
 }
+
+func TestAdminStartSession(t *testing.T) {
+	rc := newReceiver(t)
+	a := startAppScaled(t, writeProject(t, projectFiles(rc.srv.URL)), 1.0)
+
+	code, b := doJSON(t, "POST", a.adminURL()+"/api/v1/sessions", nil,
+		`{"scenario": "payment.chargeback", "key": "ord_api", "state": "processing"}`)
+	if code != 201 {
+		t.Fatalf("create: %d %s", code, b)
+	}
+	var created struct {
+		Session struct {
+			ID    string `json:"id"`
+			State string `json:"state"`
+		} `json:"session"`
+		Created bool `json:"created"`
+	}
+	if err := json.Unmarshal(b, &created); err != nil || !created.Created || created.Session.State != "processing" {
+		t.Fatalf("create body: %s", b)
+	}
+
+	// The app's request joins the session by its key.
+	if _, b := doJSON(t, "GET", a.publicURL()+"/v1/payments/x", nil, `{"order_id": "ord_api"}`); !strings.Contains(string(b), "processing") {
+		t.Errorf("app request: %s", b)
+	}
+
+	code, b = doJSON(t, "POST", a.adminURL()+"/api/v1/sessions/"+created.Session.ID+"/advance-time", nil, `{"duration": "1d"}`)
+	if code != 200 || !strings.Contains(string(b), `"state": "chargeback"`) {
+		t.Errorf("advance after start: %d %s", code, b)
+	}
+	if h := rc.wait(t); h.Event != "payment.succeeded" {
+		t.Errorf("first webhook = %s", h.Event)
+	}
+
+	if code, _ := doJSON(t, "POST", a.adminURL()+"/api/v1/sessions", nil,
+		`{"scenario": "payment.chargeback", "key": "ord_api"}`); code != 200 {
+		t.Errorf("repeat create: %d, want 200 (existing session)", code)
+	}
+	for body, want := range map[string]int{
+		`{}`:                                400,
+		`{"scenario": "ghost", "key": "k"}`: 422,
+		`{"scenario": "payment.chargeback", "key": "k", "state": "lost"}`: 422,
+		`{"scenario": "payment.chargeback"}`:                              400,
+	} {
+		if code, _ := doJSON(t, "POST", a.adminURL()+"/api/v1/sessions", nil, body); code != want {
+			t.Errorf("create %s: %d, want %d", body, code, want)
+		}
+	}
+}

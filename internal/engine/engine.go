@@ -344,6 +344,65 @@ func (e *Engine) AdvanceTo(sessionID, state string) error {
 	return nil
 }
 
+// StartSession creates a session through the admin API, in the scenario's
+// initial state or in the given one; enter actions of the starting state
+// run, as for a session a request created. The key must be what the
+// scenario's selector extracts from the app's requests, so the app's next
+// request joins this session. An existing session of the same scenario is
+// returned unchanged with created false.
+func (e *Engine) StartSession(snap *snapshot.Snapshot, scenarioID, key, state string) (*Session, bool, *ErrorReply) {
+	sc, ok := snap.ScenarioByID[scenarioID]
+	if !ok {
+		known := make([]string, 0, len(snap.Scenarios))
+		for _, s := range snap.Scenarios {
+			known = append(known, s.ID)
+		}
+		return nil, false, &ErrorReply{Status: 422, Body: map[string]any{
+			"error":           "unknown_scenario",
+			"detail":          fmt.Sprintf("scenario %q is not defined in the loaded config", scenarioID),
+			"known_scenarios": known,
+		}}
+	}
+	if key == "" {
+		return nil, false, &ErrorReply{Status: 400, Body: map[string]any{
+			"error":    "bad_request",
+			"detail":   fmt.Sprintf("a session key is required: the value selector %q yields from your app's requests", sc.KeySelector),
+			"selector": sc.KeySelector.String(),
+		}}
+	}
+	start := sc.Initial
+	if state != "" {
+		if _, ok := sc.States[state]; !ok {
+			return nil, false, &ErrorReply{Status: 422, Body: map[string]any{
+				"error":  "unknown_state",
+				"detail": fmt.Sprintf("scenario %q has no state %q", sc.ID, state),
+				"states": sc.StateNames,
+			}}
+		}
+		start = state
+	}
+	sess, created, err := e.createSession(snap, sc, key, start, "admin api")
+	if err != nil {
+		return nil, false, &ErrorReply{Status: 429, Body: map[string]any{
+			"error":  "session_limit_reached",
+			"detail": "the configured limit of concurrent sessions is reached (limits.max_sessions)",
+		}}
+	}
+	if !created && sess.Scenario.ID != sc.ID {
+		return nil, false, &ErrorReply{Status: 409, Body: map[string]any{
+			"error":             "session_conflict",
+			"detail":            fmt.Sprintf("session key %q is already bound to scenario %q; delete that session first", key, sess.Scenario.ID),
+			"session_id":        sess.ID,
+			"existing_scenario": sess.Scenario.ID,
+			"requested":         sc.ID,
+		}}
+	}
+	if created {
+		e.logger.Info().Str("session", sess.ID).Str("scenario", sc.ID).Str("key", key).Str("state", start).Msg("session created via admin api")
+	}
+	return sess, created, nil
+}
+
 // Touch slides a session's TTL, as any request to it would. Reports
 // whether the session exists.
 func (e *Engine) Touch(sessionID string) bool {

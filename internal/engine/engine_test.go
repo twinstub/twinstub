@@ -587,3 +587,50 @@ func TestTransitionHistoryIsBounded(t *testing.T) {
 		t.Errorf("newest entry = %+v", last)
 	}
 }
+
+func TestStartSession(t *testing.T) {
+	snap := testSnapshot(t, testConfig)
+	eng, sched := testEngine(t, 100)
+
+	// Directly in a later state: its enter actions run, the initial's do not.
+	sess, created, errReply := eng.StartSession(snap, "payment.chargeback", "ord_s", "processing")
+	if errReply != nil || !created {
+		t.Fatalf("start: %+v %v", errReply, created)
+	}
+	if sess.View().State != "processing" {
+		t.Errorf("state = %s", sess.View().State)
+	}
+	if req := sched.last(t); req.Event != "payment.succeeded" {
+		t.Errorf("scheduled %q, want the processing webhook", req.Event)
+	}
+	if h := sess.HistoryView(); len(h) != 1 || h[0].Cause != CauseCreated || h[0].Detail != "admin api" || h[0].To != "processing" {
+		t.Errorf("history = %+v", h)
+	}
+
+	// The app's next request joins it by key.
+	out := eng.Handle(snap, getPayment("ord_s"), "")
+	if !out.Handled || !strings.Contains(string(out.Reply.Body), "processing") {
+		t.Errorf("app request did not join the session: %+v", out)
+	}
+
+	// Same key and scenario again: the existing session, unchanged.
+	again, created, errReply := eng.StartSession(snap, "payment.chargeback", "ord_s", "")
+	if errReply != nil || created || again.ID != sess.ID {
+		t.Errorf("repeat start: %+v created=%v", errReply, created)
+	}
+
+	cases := []struct {
+		scenario, key, state string
+		status               int
+	}{
+		{"kyc.flow", "ord_s", "", 409},            // key bound to another scenario
+		{"nope", "k1", "", 422},                   // unknown scenario
+		{"payment.chargeback", "k2", "lost", 422}, // unknown state
+		{"payment.chargeback", "", "", 400},       // no key
+	}
+	for _, c := range cases {
+		if _, _, errReply := eng.StartSession(snap, c.scenario, c.key, c.state); errReply == nil || errReply.Status != c.status {
+			t.Errorf("StartSession(%q, %q, %q) = %+v, want status %d", c.scenario, c.key, c.state, errReply, c.status)
+		}
+	}
+}

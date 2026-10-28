@@ -30,6 +30,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   receiver's answer. Journal records carry `mode`, `replayed_from` and
   `header_id`; every attempt carries `signature` (`valid`, `invalid`,
   `none`).
+- `POST /api/v1/sessions` starts a session without a request from the app,
+  optionally directly in a given state.
 - Session transition history in session details: the last 100 state
   changes with wall and session time, cause (`created`, `request`,
   `webhook`, `admin`) and detail (request line or webhook event).

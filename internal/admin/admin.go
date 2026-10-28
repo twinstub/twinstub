@@ -60,6 +60,7 @@ func (a *API) Handler() http.Handler {
 		r.Get("/health", a.health)
 		r.Get("/scenarios", a.scenarios)
 		r.Get("/sessions", a.sessions)
+		r.Post("/sessions", a.sessionCreate)
 		r.Get("/sessions/{id}", a.sessionDetail)
 		r.Delete("/sessions/{id}", a.sessionDelete)
 		r.Post("/sessions/{id}/advance", a.sessionAdvance)
@@ -129,6 +130,30 @@ func (a *API) sessions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s.View())
 	}
 	writeJSON(w, 200, map[string]any{"sessions": out, "count": len(out)})
+}
+
+// sessionCreate starts a session without a request from the app, optionally
+// directly in a given state.
+func (a *API) sessionCreate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Scenario string `json:"scenario"`
+		Key      string `json:"key"`
+		State    string `json:"state"`
+	}
+	if err := decodeBody(r, &body); err != nil || body.Scenario == "" {
+		writeJSON(w, 400, map[string]any{"error": "bad_request", "detail": "expected JSON body {\"scenario\": \"<id>\", \"key\": \"<session key>\", \"state\": \"<optional start state>\"}"})
+		return
+	}
+	sess, created, errReply := a.engine.StartSession(a.snap(), body.Scenario, body.Key, body.State)
+	if errReply != nil {
+		writeJSON(w, errReply.Status, errReply.Body)
+		return
+	}
+	status := 201
+	if !created {
+		status = 200
+	}
+	writeJSON(w, status, map[string]any{"session": sess.View(), "created": created})
 }
 
 func (a *API) sessionDetail(w http.ResponseWriter, r *http.Request) {
