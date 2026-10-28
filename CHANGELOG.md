@@ -34,6 +34,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `seed` and the number of `sessions`.
 - `GET /api/v1/scenarios` lists each scenario's rules and webhooks as flat
   lists, plus stateless endpoints and webhook targets; `?id=` narrows it.
+- `GET /api/v1/misses` keeps the last 50 requests that matched nothing,
+  with the same diagnostics as their 404, so a swallowed 404 can still be
+  explained.
 - `POST /api/v1/sessions` starts a session without a request from the app,
   optionally directly in a given state.
 - Session transition history in session details: the last 100 state

@@ -248,6 +248,24 @@ curl -X POST localhost:9090/api/v1/trigger -d '{
 `sign` defaults to true when the target has signing configured; set
 `"sign": false` to send unsigned.
 
+## Misses
+
+`GET /api/v1/misses?limit=` - the most recent requests that matched no
+endpoint and no scenario rule (up to 50), newest first. Each entry carries
+the same diagnostics the 404 response did, plus `at`: method, path, the
+session if the request reached one, and the closest candidates with the
+reason each one rejected the request. Useful when your app swallowed the
+404 and you want to know why after the fact.
+
+```json
+{"misses": [{
+  "at": "2026-10-28T10:00:00Z", "error": "no_match",
+  "method": "POST", "path": "/v1/refunds",
+  "candidates": [{"endpoint": "get_rates", "method": "GET", "path": "/v1/rates",
+                  "reason": "method POST does not match GET"}]
+}], "count": 1}
+```
+
 ## Reload
 
 `POST /api/v1/reload` - reload the config from disk, same code path as the

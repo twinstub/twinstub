@@ -15,6 +15,7 @@ import (
 	"github.com/twinstub/twinstub/internal/config"
 	"github.com/twinstub/twinstub/internal/engine"
 	"github.com/twinstub/twinstub/internal/match"
+	"github.com/twinstub/twinstub/internal/misslog"
 	"github.com/twinstub/twinstub/internal/snapshot"
 	"github.com/twinstub/twinstub/internal/tmpl"
 )
@@ -26,6 +27,9 @@ type Server struct {
 	snap   func() *snapshot.Snapshot
 	engine *engine.Engine
 	logger zerolog.Logger
+	// Misses, when set, records every 404 so the admin API can explain it
+	// later.
+	Misses *misslog.Log
 }
 
 func New(snap func() *snapshot.Snapshot, eng *engine.Engine, logger zerolog.Logger) *Server {
@@ -213,6 +217,9 @@ func (s *Server) write404(w http.ResponseWriter, snap *snapshot.Snapshot, mreq *
 	}
 	if len(candidates) > 0 {
 		body["candidates"] = candidates
+	}
+	if s.Misses != nil {
+		s.Misses.Add(time.Now(), body)
 	}
 	writeJSON(w, 404, body)
 }

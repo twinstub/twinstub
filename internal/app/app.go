@@ -18,6 +18,7 @@ import (
 	"github.com/twinstub/twinstub/internal/admin"
 	"github.com/twinstub/twinstub/internal/config"
 	"github.com/twinstub/twinstub/internal/engine"
+	"github.com/twinstub/twinstub/internal/misslog"
 	"github.com/twinstub/twinstub/internal/server"
 	"github.com/twinstub/twinstub/internal/snapshot"
 	"github.com/twinstub/twinstub/internal/tmpl"
@@ -98,7 +99,9 @@ func New(opts Options) (*App, error) {
 		a.logger.With().Str("component", "engine").Logger(),
 	)
 
+	misses := misslog.New(misslog.DefaultSize)
 	pub := server.New(a.Snapshot, a.engine, a.logger.With().Str("component", "public").Logger())
+	pub.Misses = misses
 	a.publicSrv = &http.Server{Handler: pub.Handler()}
 
 	if cfg.Server.Admin.IsEnabled() {
@@ -113,6 +116,7 @@ func New(opts Options) (*App, error) {
 			Reload:     a.Reload,
 			Token:      cfg.Server.Admin.Token,
 			Logger:     a.logger.With().Str("component", "admin").Logger(),
+			Misses:     misses,
 			ConfigPath: configPath,
 			TimeScale:  opts.TimeScale,
 			Seed:       opts.Seed,

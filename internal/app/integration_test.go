@@ -1052,3 +1052,44 @@ func TestAdminDescribe(t *testing.T) {
 		t.Errorf("unknown id: %d, want 404", code)
 	}
 }
+
+// A 404 the app ignored can still be explained afterwards.
+func TestAdminMisses(t *testing.T) {
+	rc := newReceiver(t)
+	a := startApp(t, writeProject(t, projectFiles(rc.srv.URL)))
+
+	if code, _ := doJSON(t, "GET", a.publicURL()+"/v1/nothing-here", nil, ""); code != 404 {
+		t.Fatalf("expected a 404, got %d", code)
+	}
+	if code, _ := doJSON(t, "POST", a.publicURL()+"/v1/refunds", nil, `{}`); code != 404 {
+		t.Fatalf("expected a 404, got %d", code)
+	}
+
+	_, b := doJSON(t, "GET", a.adminURL()+"/api/v1/misses", nil, "")
+	var out struct {
+		Misses []struct {
+			At         time.Time `json:"at"`
+			Method     string    `json:"method"`
+			Path       string    `json:"path"`
+			Candidates []struct {
+				Reason string `json:"reason"`
+			} `json:"candidates"`
+		} `json:"misses"`
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Count != 2 || out.Misses[0].Path != "/v1/refunds" || out.Misses[1].Path != "/v1/nothing-here" {
+		t.Fatalf("misses = %s", b)
+	}
+	m := out.Misses[0]
+	if m.Method != "POST" || m.At.IsZero() || len(m.Candidates) == 0 || m.Candidates[0].Reason == "" {
+		t.Errorf("newest miss lacks diagnostics: %s", b)
+	}
+
+	_, b = doJSON(t, "GET", a.adminURL()+"/api/v1/misses?limit=1", nil, "")
+	if err := json.Unmarshal(b, &out); err != nil || out.Count != 1 {
+		t.Errorf("limit=1: %s", b)
+	}
+}

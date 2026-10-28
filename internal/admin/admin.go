@@ -18,6 +18,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/twinstub/twinstub/internal/engine"
+	"github.com/twinstub/twinstub/internal/misslog"
 	"github.com/twinstub/twinstub/internal/snapshot"
 	"github.com/twinstub/twinstub/internal/version"
 	"github.com/twinstub/twinstub/internal/webhook"
@@ -39,6 +40,7 @@ type Options struct {
 	Reload     func() error
 	Token      string
 	Logger     zerolog.Logger
+	Misses     *misslog.Log // recent 404s; nil disables /misses history
 
 	// Runtime facts reported by /health.
 	ConfigPath string
@@ -90,6 +92,7 @@ func (a *API) Handler() http.Handler {
 		r.Get("/deliveries/{id}", a.deliveryDetail)
 		r.Post("/deliveries/{id}/replay", a.deliveryReplay)
 		r.Post("/trigger", a.trigger)
+		r.Get("/misses", a.misses)
 		r.Post("/reload", a.reloadHandler)
 	})
 	return r
@@ -529,6 +532,17 @@ func (a *API) waitFirstAttempt(ctx context.Context, id string) (webhook.Record, 
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+// misses returns the most recent requests that matched nothing, newest
+// first, each with the same diagnostics the 404 carried.
+func (a *API) misses(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	list := []map[string]any{}
+	if a.opts.Misses != nil {
+		list = a.opts.Misses.List(limit)
+	}
+	writeJSON(w, 200, map[string]any{"misses": list, "count": len(list)})
 }
 
 // trigger sends a one-off webhook outside any scenario.
