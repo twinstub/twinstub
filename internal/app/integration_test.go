@@ -1093,3 +1093,46 @@ func TestAdminMisses(t *testing.T) {
 		t.Errorf("limit=1: %s", b)
 	}
 }
+
+func TestAdminReset(t *testing.T) {
+	rc := newReceiver(t)
+	a := startAppScaled(t, writeProject(t, projectFiles(rc.srv.URL)), 1.0)
+
+	for _, id := range []string{"ord_r1", "ord_r2"} {
+		doJSON(t, "POST", a.publicURL()+"/v1/payments",
+			map[string]string{"X-TwinStub-Scenario": "payment.chargeback"}, `{"order_id": "`+id+`", "amount": 1}`)
+	}
+	doJSON(t, "GET", a.publicURL()+"/v1/missing", nil, "")
+	doJSON(t, "POST", a.adminURL()+"/api/v1/trigger", nil, `{"target": "merchant", "body": {}}`)
+	rc.wait(t)
+
+	// Keep the journal this time; sessions and their webhooks still go.
+	code, b := doJSON(t, "POST", a.adminURL()+"/api/v1/reset", nil, `{"journal": false}`)
+	var out map[string]int
+	if err := json.Unmarshal(b, &out); err != nil || code != 200 {
+		t.Fatalf("reset: %d %s", code, b)
+	}
+	if out["sessions_deleted"] != 2 || out["webhooks_canceled"] != 2 || out["misses_cleared"] != 1 {
+		t.Errorf("reset counts = %s", b)
+	}
+	if _, kept := out["deliveries_cleared"]; kept {
+		t.Errorf("journal was cleared despite journal: false: %s", b)
+	}
+	if _, b := doJSON(t, "GET", a.adminURL()+"/api/v1/sessions", nil, ""); !strings.Contains(string(b), `"count": 0`) {
+		t.Errorf("sessions after reset: %s", b)
+	}
+
+	// Full reset clears the journal too.
+	_, b = doJSON(t, "POST", a.adminURL()+"/api/v1/reset", nil, "")
+	if err := json.Unmarshal(b, &out); err != nil || out["deliveries_cleared"] == 0 {
+		t.Errorf("full reset: %s", b)
+	}
+	if _, b := doJSON(t, "GET", a.adminURL()+"/api/v1/deliveries", nil, ""); !strings.Contains(string(b), `"count": 0`) {
+		t.Errorf("journal after full reset: %s", b)
+	}
+	select {
+	case h := <-rc.ch:
+		t.Errorf("webhook %s arrived after reset", h.Event)
+	case <-time.After(200 * time.Millisecond):
+	}
+}

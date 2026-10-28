@@ -359,3 +359,51 @@ func ids(rs []Record) []string {
 	}
 	return out
 }
+
+func TestCancelAll(t *testing.T) {
+	var calls atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+	}))
+	defer srv.Close()
+
+	d := testDispatcher(t)
+	tg := target(srv.URL, 1, time.Second)
+	a := d.Schedule(ScheduleRequest{SessionID: "s1", TargetName: "cb", Target: tg, Body: []byte(`{}`), Delay: 200 * time.Millisecond})
+	b := d.Schedule(ScheduleRequest{TargetName: "cb", Target: tg, Body: []byte(`{}`), Delay: 200 * time.Millisecond})
+	if _, err := d.Advance(context.Background(), "s1", time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := d.CancelAll(); n != 2 {
+		t.Errorf("canceled = %d, want 2 (one with a session, one without)", n)
+	}
+	waitStatus(t, d, a, StatusCanceled)
+	waitStatus(t, d, b, StatusCanceled)
+	if off := d.ClockOffset("s1"); off != 0 {
+		t.Errorf("session clock survived CancelAll: %v", off)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if calls.Load() != 0 {
+		t.Error("a canceled delivery still fired")
+	}
+	if n := d.CancelAll(); n != 0 {
+		t.Errorf("second CancelAll canceled %d", n)
+	}
+}
+
+func TestDeliveryLogClear(t *testing.T) {
+	l := NewDeliveryLog(4)
+	l.Add(&Record{ID: "a"})
+	l.Add(&Record{ID: "b"})
+	if n := l.Clear(); n != 2 {
+		t.Errorf("Clear = %d, want 2", n)
+	}
+	if _, ok := l.Get("a"); ok {
+		t.Error("record survived Clear")
+	}
+	l.Add(&Record{ID: "c"})
+	if got := l.List("", "", 0); len(got) != 1 || got[0].ID != "c" {
+		t.Errorf("after Clear and Add: %+v", got)
+	}
+}

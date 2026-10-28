@@ -427,6 +427,17 @@ func (e *Engine) DeleteSession(id string) bool {
 	return true
 }
 
+// DeleteAllSessions removes every session and cancels its queued webhooks.
+func (e *Engine) DeleteAllSessions() int {
+	n := 0
+	for _, sess := range e.Store.List() {
+		if e.DeleteSession(sess.ID) {
+			n++
+		}
+	}
+	return n
+}
+
 // SweepExpired is called periodically by the TTL sweeper.
 func (e *Engine) SweepExpired() {
 	for _, sess := range e.Store.Sweep(time.Now()) {

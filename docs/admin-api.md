@@ -266,6 +266,20 @@ reason each one rejected the request. Useful when your app swallowed the
 }], "count": 1}
 ```
 
+## Reset
+
+`POST /api/v1/reset` - a clean slate between test runs: every session is
+deleted and every queued webhook canceled (session-bound or sent with
+`/trigger`), session clocks are dropped, and by default the delivery
+journal and the 404 log are cleared too. Keep either log with
+`{"journal": false}` or `{"misses": false}`. To reset one session, use
+`DELETE /api/v1/sessions/{id}`.
+
+```json
+{"webhooks_canceled": 3, "sessions_deleted": 2,
+ "deliveries_cleared": 14, "misses_cleared": 1}
+```
+
 ## Reload
 
 `POST /api/v1/reload` - reload the config from disk, same code path as the

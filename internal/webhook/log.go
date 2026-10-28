@@ -157,3 +157,14 @@ func copyRecord(r *Record) Record {
 	}
 	return c
 }
+
+// Clear empties the journal and reports how many records it held.
+func (l *DeliveryLog) Clear() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := l.count
+	clear(l.ring)
+	l.byID = map[string]*Record{}
+	l.next, l.count = 0, 0
+	return n
+}

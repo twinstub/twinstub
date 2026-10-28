@@ -94,6 +94,7 @@ func (a *API) Handler() http.Handler {
 		r.Post("/trigger", a.trigger)
 		r.Get("/misses", a.misses)
 		r.Post("/reload", a.reloadHandler)
+		r.Post("/reset", a.resetAll)
 	})
 	return r
 }
@@ -568,6 +569,31 @@ func (a *API) trigger(w http.ResponseWriter, r *http.Request) {
 		NoSign:     body.Sign != nil && !*body.Sign,
 	})
 	writeJSON(w, 202, map[string]any{"delivery_id": id})
+}
+
+// resetAll returns the engine to a clean slate between test runs: every
+// session and queued webhook goes, and by default the delivery journal and
+// the 404 log are cleared too.
+func (a *API) resetAll(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Journal *bool `json:"journal"`
+		Misses  *bool `json:"misses"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "bad_request", "detail": "expected an empty body or {\"journal\": false, \"misses\": false} to keep the logs"})
+		return
+	}
+	// Cancel first so the count covers webhooks of every session; deleting
+	// the sessions afterwards finds nothing left to cancel.
+	out := map[string]any{"webhooks_canceled": a.disp.CancelAll()}
+	out["sessions_deleted"] = a.engine.DeleteAllSessions()
+	if body.Journal == nil || *body.Journal {
+		out["deliveries_cleared"] = a.disp.Log().Clear()
+	}
+	if (body.Misses == nil || *body.Misses) && a.opts.Misses != nil {
+		out["misses_cleared"] = a.opts.Misses.Clear()
+	}
+	writeJSON(w, 200, out)
 }
 
 func (a *API) reloadHandler(w http.ResponseWriter, r *http.Request) {

@@ -284,6 +284,40 @@ func (d *Dispatcher) CancelSession(sessionID string) {
 	}
 }
 
+// CancelAll drops every queued delivery, with or without a session, and
+// every session clock. Attempts already in flight finish. Reports how many
+// deliveries were canceled.
+func (d *Dispatcher) CancelAll() int {
+	d.mu.Lock()
+	queued := map[*delivery]bool{}
+	for _, del := range d.heap {
+		queued[del] = true
+	}
+	for _, m := range d.pending {
+		for _, del := range m {
+			queued[del] = true
+		}
+	}
+	d.pending = map[string]map[string]*delivery{}
+	for sid := range d.offsets {
+		if d.exclusive[sid] {
+			d.gone[sid] = true
+		} else {
+			delete(d.offsets, sid)
+		}
+	}
+	d.mu.Unlock()
+
+	n := 0
+	for del := range queued {
+		if del.canceled.CompareAndSwap(false, true) {
+			n++
+			d.log.update(del.id, func(r *Record) { r.Status = StatusCanceled; r.NextAttemptAt = nil })
+		}
+	}
+	return n
+}
+
 // Stop drains in-flight deliveries, waiting up to the context deadline.
 func (d *Dispatcher) Stop(ctx context.Context) {
 	close(d.stop)

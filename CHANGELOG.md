@@ -37,6 +37,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `GET /api/v1/misses` keeps the last 50 requests that matched nothing,
   with the same diagnostics as their 404, so a swallowed 404 can still be
   explained.
+- `POST /api/v1/reset` deletes every session and queued webhook and, by
+  default, clears the delivery journal and the 404 log.
 - `POST /api/v1/sessions` starts a session without a request from the app,
   optionally directly in a given state.
 - Session transition history in session details: the last 100 state
