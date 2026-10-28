@@ -6,6 +6,28 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Session clocks**: every session runs on its own virtual clock.
+  `POST /api/v1/sessions/{id}/advance-time` moves it forward and replays
+  everything due in the window in order (webhooks, the transitions they
+  trigger, the webhooks those schedule, retries), so "a chargeback 30 days
+  later" plays out in one call. Other sessions stay on wall time; signature
+  timestamps and session TTL stay on wall time.
+- Template functions `now`, `nowUnix` and `addTime` render session time
+  inside scenarios.
+- `{{ .Webhook.At }}` and `{{ .Webhook.AtUnix }}` in webhook bodies: the
+  session time the delivery is due.
+- Admin API: `virtual_now` and `clock_offset` in session details; delivery
+  attempts in an advanced session carry `virtual_at`.
+
+### Changed
+
+- `fire_at` of pending webhooks in session details is reported in session
+  time. It is unchanged for sessions that were never advanced.
+
+## [1.0.0] - 2026-09-05
+
 First open-source release of TwinStub OSS core.
 
 ### Added
@@ -31,4 +53,5 @@ First open-source release of TwinStub OSS core.
 - Example catalog: quickstart project plus eight fintech scenarios, and
   Go / Node webhook signature-verification snippets.
 
-[Unreleased]: https://github.com/twinstub/twinstub/commits/main
+[Unreleased]: https://github.com/twinstub/twinstub/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/twinstub/twinstub/releases/tag/v1.0.0

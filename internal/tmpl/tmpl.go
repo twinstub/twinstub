@@ -23,6 +23,22 @@ import (
 type Context struct {
 	Request RequestCtx
 	Session *SessionCtx // nil outside scenarios
+	Webhook *WebhookCtx // set only while rendering a webhook body
+
+	// clockOffset shifts now/nowUnix/addTime for sessions whose virtual
+	// clock was advanced. Zero keeps wall-clock time.
+	clockOffset time.Duration
+}
+
+// SetClockOffset makes the time functions render a session's virtual time.
+func (c *Context) SetClockOffset(d time.Duration) { c.clockOffset = d }
+
+// WebhookCtx describes the delivery a webhook body is rendered for. At is
+// the session time the delivery is due, which is later than now by the
+// webhook's delay.
+type WebhookCtx struct {
+	At     string // RFC3339 UTC
+	AtUnix int64
 }
 
 type RequestCtx struct {
@@ -95,8 +111,28 @@ func (e *Engine) ULID() string {
 
 const randAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-func (e *Engine) funcs() template.FuncMap {
+// timeFuncs builds now/nowUnix/addTime over the given clock, so a session
+// with an advanced virtual clock renders its own time.
+func timeFuncs(clock func() time.Time) template.FuncMap {
 	return template.FuncMap{
+		"now": func() string {
+			return clock().UTC().Format(time.RFC3339)
+		},
+		"nowUnix": func() int64 {
+			return clock().Unix()
+		},
+		"addTime": func(d string) (string, error) {
+			dur, err := xtime.ParseDuration(d)
+			if err != nil {
+				return "", err
+			}
+			return clock().UTC().Add(dur).Format(time.RFC3339), nil
+		},
+	}
+}
+
+func (e *Engine) funcs() template.FuncMap {
+	fm := template.FuncMap{
 		"uuid": func() string {
 			var b [16]byte
 			e.randBytes(b[:])
@@ -105,19 +141,6 @@ func (e *Engine) funcs() template.FuncMap {
 			return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 		},
 		"ulid": e.ULID,
-		"now": func() string {
-			return time.Now().UTC().Format(time.RFC3339)
-		},
-		"nowUnix": func() int64 {
-			return time.Now().Unix()
-		},
-		"addTime": func(d string) (string, error) {
-			dur, err := xtime.ParseDuration(d)
-			if err != nil {
-				return "", err
-			}
-			return time.Now().UTC().Add(dur).Format(time.RFC3339), nil
-		},
 		"randInt": func(min, max int) (int, error) {
 			if max < min {
 				return 0, fmt.Errorf("randInt: max %d < min %d", max, min)
@@ -144,6 +167,10 @@ func (e *Engine) funcs() template.FuncMap {
 			return string(out), nil
 		},
 	}
+	for name, f := range timeFuncs(time.Now) {
+		fm[name] = f
+	}
+	return fm
 }
 
 // Parse compiles a template. The name shows up in render error messages, so
@@ -162,6 +189,17 @@ const MaxRenderSize = 5 << 20
 
 // Render executes a parsed template with the output size cap.
 func Render(t *template.Template, ctx *Context) ([]byte, error) {
+	if ctx != nil && ctx.clockOffset != 0 {
+		// Parsed templates are shared and executed concurrently, so the
+		// shifted time functions go on a private clone. Wall-clock renders,
+		// the common case, skip the clone.
+		clone, err := t.Clone()
+		if err != nil {
+			return nil, err
+		}
+		off := ctx.clockOffset
+		t = clone.Funcs(timeFuncs(func() time.Time { return time.Now().Add(off) }))
+	}
 	var buf limitedBuffer
 	if err := t.Execute(&buf, ctx); err != nil {
 		return nil, fmt.Errorf("%s", strings.TrimPrefix(err.Error(), "template: "))

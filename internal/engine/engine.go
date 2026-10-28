@@ -20,6 +20,9 @@ type Scheduler interface {
 	Schedule(req webhook.ScheduleRequest) string
 	CancelSession(sessionID string)
 	PendingCount(sessionID string) int
+	// ClockOffset is how far the session's virtual clock runs ahead of
+	// wall time; templates render that time.
+	ClockOffset(sessionID string) time.Duration
 }
 
 type Engine struct {
@@ -192,6 +195,7 @@ func (e *Engine) handleInSession(sess *Session, r *match.Request) Outcome {
 			continue
 		}
 		ctx := buildContext(r, params, sess)
+		ctx.SetClockOffset(e.sched.ClockOffset(sess.ID))
 		rendered, err := rule.Reply.Render(ctx)
 		if err != nil {
 			return Outcome{
@@ -259,8 +263,18 @@ func (e *Engine) runEnterLocked(sess *Session, reqCtx *tmpl.RequestCtx) {
 		return
 	}
 	epoch := sess.Epoch
+	offset := e.sched.ClockOffset(sess.ID)
 	for _, action := range st.Enter {
-		ctx := &tmpl.Context{Request: *reqCtx, Session: sessionCtx(sess)}
+		delay := time.Duration(float64(action.After) * e.timeScale)
+		// The body is rendered now, on entry (documented contract), so
+		// .Webhook.At carries the session time the delivery is due.
+		due := time.Now().Add(offset + delay).UTC()
+		ctx := &tmpl.Context{
+			Request: *reqCtx,
+			Session: sessionCtx(sess),
+			Webhook: &tmpl.WebhookCtx{At: due.Format(time.RFC3339), AtUnix: due.Unix()},
+		}
+		ctx.SetClockOffset(offset)
 		body, err := tmpl.Render(action.Body, ctx)
 		if err != nil {
 			e.logger.Error().Str("session", sess.ID).Str("state", sess.State).
@@ -283,11 +297,11 @@ func (e *Engine) runEnterLocked(sess *Session, reqCtx *tmpl.RequestCtx) {
 			Target:         action.Target,
 			Event:          action.Event,
 			Body:           body,
-			Delay:          time.Duration(float64(action.After) * e.timeScale),
+			Delay:          delay,
 			OnFirstAttempt: onFirst,
 		})
 		e.logger.Info().Str("session", sess.ID).Str("delivery", id).
-			Str("target", action.TargetName).Dur("after", time.Duration(float64(action.After)*e.timeScale)).
+			Str("target", action.TargetName).Dur("after", delay).
 			Msg("webhook scheduled")
 	}
 }
@@ -321,6 +335,19 @@ func (e *Engine) AdvanceTo(sessionID, state string) error {
 	sess.touchLocked(time.Now())
 	e.enterStateLocked(sess, state, &tmpl.RequestCtx{})
 	return nil
+}
+
+// Touch slides a session's TTL, as any request to it would. Reports
+// whether the session exists.
+func (e *Engine) Touch(sessionID string) bool {
+	sess := e.Store.GetByID(sessionID)
+	if sess == nil {
+		return false
+	}
+	sess.mu.Lock()
+	sess.touchLocked(time.Now())
+	sess.mu.Unlock()
+	return true
 }
 
 // DeleteSession removes a session and cancels its queued webhooks.

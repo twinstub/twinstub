@@ -162,3 +162,64 @@ func TestRenderSizeLimit(t *testing.T) {
 		t.Errorf("small render should pass: %v", err)
 	}
 }
+
+func TestClockOffsetShiftsTimeFunctions(t *testing.T) {
+	e := New(1, true)
+	ctx := baseCtx()
+	ctx.SetClockOffset(30 * 24 * time.Hour)
+
+	got, err := time.Parse(time.RFC3339, render(t, e, `{{ now }}`, ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Now().Add(30 * 24 * time.Hour)
+	if d := got.Sub(want); d < -2*time.Second || d > 2*time.Second {
+		t.Errorf("now = %v, want about %v", got, want)
+	}
+
+	unix, _ := strconv.ParseInt(render(t, e, `{{ nowUnix }}`, ctx), 10, 64)
+	if d := unix - want.Unix(); d < -2 || d > 2 {
+		t.Errorf("nowUnix = %d, want about %d", unix, want.Unix())
+	}
+
+	added, err := time.Parse(time.RFC3339, render(t, e, `{{ addTime "1d" }}`, ctx))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := added.Sub(want.Add(24 * time.Hour)); d < -2*time.Second || d > 2*time.Second {
+		t.Errorf("addTime = %v, want about %v", added, want.Add(24*time.Hour))
+	}
+}
+
+// The clone that carries shifted time functions must not leak into the
+// shared template: a later wall-clock render keeps real time.
+func TestClockOffsetDoesNotLeakIntoSharedTemplate(t *testing.T) {
+	e := New(1, true)
+	tpl, err := e.Parse("test", `{{ nowUnix }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shifted := baseCtx()
+	shifted.SetClockOffset(48 * time.Hour)
+	if _, err := Render(tpl, shifted); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Render(tpl, baseCtx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	unix, _ := strconv.ParseInt(string(out), 10, 64)
+	if d := unix - time.Now().Unix(); d < -2 || d > 2 {
+		t.Errorf("wall-clock render after a shifted one = %d, want about %d", unix, time.Now().Unix())
+	}
+}
+
+func TestWebhookContext(t *testing.T) {
+	e := New(1, true)
+	ctx := baseCtx()
+	ctx.Webhook = &WebhookCtx{At: "2026-11-27T10:00:00Z", AtUnix: 1795773600}
+	got := render(t, e, `{{ .Webhook.At }} {{ .Webhook.AtUnix }}`, ctx)
+	if got != "2026-11-27T10:00:00Z 1795773600" {
+		t.Errorf("webhook ctx = %q", got)
+	}
+}

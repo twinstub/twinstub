@@ -185,7 +185,9 @@ Semantics:
   already moved to another state by then (e.g. via the admin API), the
   stale transition is dropped.
 - The webhook body is rendered when the state is entered, so it sees the
-  session variables as of that moment.
+  session variables as of that moment. `now` there is the entry time; use
+  `{{ .Webhook.At }}` for the time the delivery is due (entry plus `after`),
+  e.g. a `created` field on a chargeback that arrives 30 days later.
 - A request that matches no rule of the current state falls through to the
   stateless endpoints, then to 404 diagnostics. The session stays put.
 - Cycles in the state graph are allowed. `validate` checks that `goto` and
@@ -246,9 +248,11 @@ Go `text/template`. Context:
 | `.Session.ID` | engine-generated ULID |
 | `.Session.Key`, `.Session.Scenario`, `.Session.State` | strings |
 | `.Session.Vars.<name>` | variables written by `set` |
+| `.Webhook.At`, `.Webhook.AtUnix` | in a webhook body: the session time the delivery is due, RFC3339 UTC and unix seconds |
 
 `.Session` is only set inside scenarios; referencing it in a stateless
-endpoint is a render error (500).
+endpoint is a render error (500). `.Webhook` is only set while rendering a
+webhook body.
 
 Functions (the complete v1.0 set):
 
@@ -266,6 +270,12 @@ Functions (the complete v1.0 set):
 
 With `--seed N`, `uuid`, `randInt` and `randString` are reproducible
 across runs: useful for snapshot-style assertions in CI.
+
+Inside a scenario, `now`, `nowUnix` and `addTime` render the session's own
+clock. It equals wall-clock time until the session is advanced through the
+admin API (`POST /api/v1/sessions/{id}/advance-time`); after advancing 30
+days, `now` in that session is 30 days later. Stateless endpoints always use
+wall-clock time.
 
 ## Limits (validated and enforced at runtime)
 

@@ -4,7 +4,9 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -18,6 +20,14 @@ import (
 	"github.com/twinstub/twinstub/internal/snapshot"
 	"github.com/twinstub/twinstub/internal/version"
 	"github.com/twinstub/twinstub/internal/webhook"
+	"github.com/twinstub/twinstub/internal/xtime"
+)
+
+const (
+	// defaultAdvanceTimeout bounds one advance-time call: it waits for the
+	// receiver to answer every delivery in the window.
+	defaultAdvanceTimeout = 60 * time.Second
+	maxAdvanceTimeout     = 10 * time.Minute
 )
 
 type API struct {
@@ -53,6 +63,7 @@ func (a *API) Handler() http.Handler {
 		r.Get("/sessions/{id}", a.sessionDetail)
 		r.Delete("/sessions/{id}", a.sessionDelete)
 		r.Post("/sessions/{id}/advance", a.sessionAdvance)
+		r.Post("/sessions/{id}/advance-time", a.sessionAdvanceTime)
 		r.Get("/deliveries", a.deliveries)
 		r.Get("/deliveries/{id}", a.deliveryDetail)
 		r.Post("/deliveries/{id}/replay", a.deliveryReplay)
@@ -126,8 +137,11 @@ func (a *API) sessionDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 404, map[string]any{"error": "session_not_found", "id": id})
 		return
 	}
+	off := a.disp.ClockOffset(id)
 	writeJSON(w, 200, map[string]any{
 		"session":          sess.View(),
+		"virtual_now":      time.Now().Add(off),
+		"clock_offset":     off.String(),
 		"pending_webhooks": a.disp.PendingForSession(id),
 	})
 }
@@ -157,6 +171,65 @@ func (a *API) sessionAdvance(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := a.engine.Store.GetByID(id)
 	writeJSON(w, 200, map[string]any{"session": sess.View()})
+}
+
+// sessionAdvanceTime moves one session's virtual clock forward and replays
+// what becomes due inside the window, in order.
+func (a *API) sessionAdvanceTime(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Duration string `json:"duration"`
+		Timeout  string `json:"timeout"`
+	}
+	if err := decodeBody(r, &body); err != nil || body.Duration == "" {
+		writeJSON(w, 400, map[string]any{"error": "bad_request", "detail": "expected JSON body {\"duration\": \"30d\"} with an optional \"timeout\": \"60s\""})
+		return
+	}
+	by, err := xtime.ParseDuration(body.Duration)
+	if err != nil || by < 0 {
+		writeJSON(w, 400, map[string]any{"error": "bad_duration", "detail": "duration must be like 30s, 2h or 30d"})
+		return
+	}
+	timeout := defaultAdvanceTimeout
+	if body.Timeout != "" {
+		t, err := xtime.ParseDuration(body.Timeout)
+		if err != nil || t <= 0 {
+			writeJSON(w, 400, map[string]any{"error": "bad_timeout", "detail": "timeout must be like 30s or 2m"})
+			return
+		}
+		timeout = min(t, maxAdvanceTimeout)
+	}
+	if !a.engine.Touch(id) {
+		writeJSON(w, 404, map[string]any{"error": "session_not_found", "id": id})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	res, err := a.disp.Advance(ctx, id, by)
+	switch {
+	case errors.Is(err, webhook.ErrSessionBusy):
+		writeJSON(w, 409, map[string]any{"error": "session_busy", "detail": err.Error()})
+		return
+	case err != nil:
+		writeJSON(w, 400, map[string]any{"error": "advance_failed", "detail": err.Error()})
+		return
+	}
+
+	out := map[string]any{
+		"virtual_now":  res.VirtualNow,
+		"clock_offset": res.ClockOffset.String(),
+		"fired":        res.Fired,
+	}
+	if res.Partial {
+		out["partial"] = true
+		out["reason"] = res.Reason
+	}
+	// The session can be gone by now if it was reset during the call.
+	if sess := a.engine.Store.GetByID(id); sess != nil {
+		out["session"] = sess.View()
+	}
+	writeJSON(w, 200, out)
 }
 
 func (a *API) deliveries(w http.ResponseWriter, r *http.Request) {

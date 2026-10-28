@@ -56,6 +56,7 @@ type nullSched struct{}
 func (nullSched) Schedule(webhook.ScheduleRequest) string { return "x" }
 func (nullSched) CancelSession(string)                    {}
 func (nullSched) PendingCount(string) int                 { return 0 }
+func (nullSched) ClockOffset(string) time.Duration        { return 0 }
 
 func testServer(t *testing.T) *httptest.Server {
 	t.Helper()

@@ -165,11 +165,16 @@ scenarios:
 
 func startApp(t *testing.T, configPath string) *App {
 	t.Helper()
+	return startAppScaled(t, configPath, 0.01)
+}
+
+func startAppScaled(t *testing.T, configPath string, timeScale float64) *App {
+	t.Helper()
 	a, err := New(Options{
 		ConfigPath:    configPath,
 		Port:          -1,
 		AdminPort:     -1,
-		TimeScale:     0.01,
+		TimeScale:     timeScale,
 		Seed:          42,
 		Seeded:        true,
 		AllowPrivate:  true,
@@ -604,5 +609,117 @@ func TestGracefulShutdownUnder6s(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 6*time.Second {
 		t.Errorf("shutdown took %v, spec demands <= 6s", elapsed)
+	}
+}
+
+// TestAdvanceTime: on wall-clock delays (time scale 1) the chain would take
+// 30 seconds. Advancing the session clock replays it at once, in order, with
+// signatures still carrying a real timestamp.
+func TestAdvanceTime(t *testing.T) {
+	rc := newReceiver(t)
+	a := startAppScaled(t, writeProject(t, projectFiles(rc.srv.URL)), 1.0)
+
+	code, _ := doJSON(t, "POST", a.publicURL()+"/v1/payments",
+		map[string]string{"X-TwinStub-Scenario": "payment.chargeback"}, `{"order_id": "ord_adv", "amount": 500}`)
+	if code != 201 {
+		t.Fatalf("create payment: %d", code)
+	}
+	_, b := doJSON(t, "GET", a.adminURL()+"/api/v1/sessions", nil, "")
+	var list struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(b, &list); err != nil || len(list.Sessions) != 1 {
+		t.Fatalf("sessions: %s", b)
+	}
+	id := list.Sessions[0].ID
+
+	select {
+	case h := <-rc.ch:
+		t.Fatalf("webhook %s arrived on wall time before any advance", h.Event)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	code, b = doJSON(t, "POST", a.adminURL()+"/api/v1/sessions/"+id+"/advance-time", nil, `{"duration": "1d"}`)
+	if code != 200 {
+		t.Fatalf("advance-time: %d %s", code, b)
+	}
+	var res struct {
+		ClockOffset string `json:"clock_offset"`
+		Fired       []struct {
+			Event  string `json:"event"`
+			Result string `json:"result"`
+		} `json:"fired"`
+		Session struct {
+			State string `json:"state"`
+		} `json:"session"`
+	}
+	if err := json.Unmarshal(b, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Fired) != 2 || res.Fired[0].Event != "payment.succeeded" || res.Fired[1].Event != "payment.chargeback" {
+		t.Fatalf("fired = %+v", res.Fired)
+	}
+	for _, f := range res.Fired {
+		if f.Result != "delivered" {
+			t.Errorf("%s result = %s", f.Event, f.Result)
+		}
+	}
+	if res.Session.State != "chargeback" {
+		t.Errorf("state = %q, want chargeback", res.Session.State)
+	}
+	if res.ClockOffset != "24h0m0s" {
+		t.Errorf("clock offset = %q", res.ClockOffset)
+	}
+
+	h1, h2 := rc.wait(t), rc.wait(t)
+	if h1.Event != "payment.succeeded" || h2.Event != "payment.chargeback" {
+		t.Errorf("receiver order: %s, %s", h1.Event, h2.Event)
+	}
+	verifySignature(t, h1) // fails if the signed timestamp were shifted by a day
+	verifySignature(t, h2)
+
+	_, b = doJSON(t, "GET", a.publicURL()+"/v1/payments/x", nil, `{"order_id": "ord_adv"}`)
+	if !strings.Contains(string(b), "chargeback") {
+		t.Errorf("public API after advance: %s", b)
+	}
+
+	_, b = doJSON(t, "GET", a.adminURL()+"/api/v1/sessions/"+id, nil, "")
+	var detail struct {
+		VirtualNow time.Time `json:"virtual_now"`
+	}
+	if err := json.Unmarshal(b, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Until(detail.VirtualNow) - 24*time.Hour; d < -5*time.Second || d > 5*time.Second {
+		t.Errorf("virtual_now = %v, want about a day ahead", detail.VirtualNow)
+	}
+}
+
+func TestAdvanceTimeErrors(t *testing.T) {
+	rc := newReceiver(t)
+	a := startApp(t, writeProject(t, projectFiles(rc.srv.URL)))
+
+	if code, _ := doJSON(t, "POST", a.adminURL()+"/api/v1/sessions/nope/advance-time", nil, `{"duration": "1h"}`); code != 404 {
+		t.Errorf("unknown session: %d, want 404", code)
+	}
+	doJSON(t, "POST", a.publicURL()+"/v1/payments",
+		map[string]string{"X-TwinStub-Scenario": "payment.chargeback"}, `{"order_id": "ord_err", "amount": 1}`)
+	_, b := doJSON(t, "GET", a.adminURL()+"/api/v1/sessions", nil, "")
+	var list struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
+	}
+	_ = json.Unmarshal(b, &list)
+	if len(list.Sessions) == 0 {
+		t.Fatal("no session")
+	}
+	url := a.adminURL() + "/api/v1/sessions/" + list.Sessions[0].ID + "/advance-time"
+	for _, body := range []string{``, `{"duration": "soon"}`, `{"duration": "1h", "timeout": "-1s"}`} {
+		if code, _ := doJSON(t, "POST", url, nil, body); code != 400 {
+			t.Errorf("body %q: %d, want 400", body, code)
+		}
 	}
 }

@@ -1,11 +1,13 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -72,6 +74,13 @@ type fakeSched struct {
 	mu        sync.Mutex
 	scheduled []webhook.ScheduleRequest
 	canceled  []string
+	offset    time.Duration
+}
+
+func (f *fakeSched) ClockOffset(string) time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.offset
 }
 
 func (f *fakeSched) Schedule(req webhook.ScheduleRequest) string {
@@ -428,5 +437,102 @@ func TestStoreShardingAndList(t *testing.T) {
 	store.Delete("id_42")
 	if store.GetByKey("key_42") != nil || store.Len() != 99 {
 		t.Error("delete did not clean both indexes")
+	}
+}
+
+const clockConfig = `
+version: 1
+targets:
+  cb:
+    url: http://localhost:1/hook
+scenarios:
+  - id: clock
+    session:
+      key: "body:$.order_id"
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply: {status: 201, body: '{{ nowUnix }}'}
+            goto: paid
+      paid:
+        enter:
+          - webhook:
+              target: cb
+              event: payment.chargeback
+              after: 7d
+              body: '{"entered": {{ nowUnix }}, "at": {{ .Webhook.AtUnix }}}'
+`
+
+func near(got, want int64) bool { return got-want >= -2 && got-want <= 2 }
+
+func replyUnix(t *testing.T, out Outcome) int64 {
+	t.Helper()
+	if !out.Handled {
+		t.Fatalf("not handled: %+v", out)
+	}
+	v, err := strconv.ParseInt(string(out.Reply.Body), 10, 64)
+	if err != nil {
+		t.Fatalf("reply body %q: %v", out.Reply.Body, err)
+	}
+	return v
+}
+
+// Replies and webhook bodies render the session's virtual time; a webhook
+// body also knows when it is due.
+func TestTemplatesUseSessionClock(t *testing.T) {
+	snap := testSnapshot(t, clockConfig)
+	sched := &fakeSched{offset: 10 * 24 * time.Hour}
+	eng := New(NewStore(100), sched, 1.0, 100, tmpl.New(1, true).ULID, zerolog.Nop())
+
+	out := eng.Handle(snap, postPayment("ord_c", 1), "clock")
+	if !out.Handled {
+		t.Fatalf("not handled: %+v", out)
+	}
+	sessionNow := time.Now().Add(sched.offset).Unix()
+	replied := replyUnix(t, out)
+	if !near(replied, sessionNow) {
+		t.Errorf("reply nowUnix = %d, want session time %d", replied, sessionNow)
+	}
+
+	var body struct{ Entered, At int64 }
+	if err := json.Unmarshal(sched.last(t).Body, &body); err != nil {
+		t.Fatalf("webhook body: %v", err)
+	}
+	if !near(body.Entered, sessionNow) {
+		t.Errorf("webhook nowUnix = %d, want session time at entry %d", body.Entered, sessionNow)
+	}
+	if want := sessionNow + int64(7*24*time.Hour/time.Second); !near(body.At, want) {
+		t.Errorf(".Webhook.AtUnix = %d, want due time %d", body.At, want)
+	}
+}
+
+// Without an advanced clock nothing changes: templates keep wall time.
+func TestTemplatesWallClockByDefault(t *testing.T) {
+	snap := testSnapshot(t, clockConfig)
+	eng, _ := testEngine(t, 100)
+	out := eng.Handle(snap, postPayment("ord_w", 1), "clock")
+	replied := replyUnix(t, out)
+	if !near(replied, time.Now().Unix()) {
+		t.Errorf("reply nowUnix = %d, want wall time %d", replied, time.Now().Unix())
+	}
+}
+
+func TestTouch(t *testing.T) {
+	snap := testSnapshot(t, testConfig)
+	eng, _ := testEngine(t, 100)
+	eng.Handle(snap, postPayment("ord_t", 1), "payment.chargeback")
+	sess := eng.Store.List()[0]
+	before := sess.View().ExpiresAt
+	time.Sleep(10 * time.Millisecond)
+	if !eng.Touch(sess.ID) {
+		t.Fatal("Touch reported a live session as missing")
+	}
+	if !sess.View().ExpiresAt.After(before) {
+		t.Error("Touch did not slide the TTL")
+	}
+	if eng.Touch("nope") {
+		t.Error("Touch reported a missing session as live")
 	}
 }

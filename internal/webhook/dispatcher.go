@@ -60,7 +60,9 @@ type delivery struct {
 	backoff     time.Duration
 	fireAt      time.Time
 	canceled    atomic.Bool
-	index       int // heap bookkeeping
+	index       int    // heap bookkeeping; -1 when not in the heap
+	seq         uint64 // scheduling order, breaks fireAt ties deterministically
+	running     bool   // handed to a worker or being attempted; guarded by Dispatcher.mu
 }
 
 type deliveryHeap []*delivery
@@ -75,6 +77,7 @@ func (h *deliveryHeap) Pop() any {
 	d := old[n-1]
 	old[n-1] = nil
 	*h = old[:n-1]
+	d.index = -1
 	return d
 }
 
@@ -96,6 +99,15 @@ type Dispatcher struct {
 	mu      sync.Mutex
 	heap    deliveryHeap
 	pending map[string]map[string]*delivery // session -> delivery id
+	seq     uint64
+	// offsets holds how far each session's virtual clock runs ahead of the
+	// wall clock (see clock.go).
+	offsets map[string]time.Duration
+	// exclusive marks sessions being driven synchronously by Advance. Their
+	// deliveries stay out of the heap so the scheduler never races them.
+	exclusive map[string]bool
+	// gone marks exclusive sessions canceled mid-drive.
+	gone map[string]bool
 
 	wake   chan struct{}
 	workCh chan *delivery
@@ -130,12 +142,15 @@ func NewDispatcher(opts Options) *Dispatcher {
 				return http.ErrUseLastResponse
 			},
 		},
-		logger:  opts.Logger,
-		pending: map[string]map[string]*delivery{},
-		wake:    make(chan struct{}, 1),
-		workCh:  make(chan *delivery),
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		logger:    opts.Logger,
+		pending:   map[string]map[string]*delivery{},
+		offsets:   map[string]time.Duration{},
+		exclusive: map[string]bool{},
+		gone:      map[string]bool{},
+		wake:      make(chan struct{}, 1),
+		workCh:    make(chan *delivery),
+		stop:      make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 	for i := 0; i < opts.Workers; i++ {
 		d.wg.Add(1)
@@ -176,7 +191,9 @@ func (d *Dispatcher) Schedule(req ScheduleRequest) string {
 	})
 
 	d.mu.Lock()
-	heap.Push(&d.heap, del)
+	d.seq++
+	del.seq = d.seq
+	d.pushLocked(del)
 	if del.sessionID != "" {
 		m := d.pending[del.sessionID]
 		if m == nil {
@@ -188,6 +205,17 @@ func (d *Dispatcher) Schedule(req ScheduleRequest) string {
 	d.mu.Unlock()
 	d.kick()
 	return del.id
+}
+
+// pushLocked queues a delivery on the heap, unless its session is being
+// driven by Advance: then it waits in d.pending until release. Caller holds
+// d.mu.
+func (d *Dispatcher) pushLocked(del *delivery) {
+	if del.sessionID != "" && d.exclusive[del.sessionID] {
+		del.index = -1
+		return
+	}
+	heap.Push(&d.heap, del)
 }
 
 func (d *Dispatcher) kick() {
@@ -208,12 +236,13 @@ func (d *Dispatcher) PendingForSession(sessionID string) []PendingInfo {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	out := make([]PendingInfo, 0, len(d.pending[sessionID]))
+	off := d.offsets[sessionID]
 	for _, del := range d.pending[sessionID] {
 		out = append(out, PendingInfo{
 			DeliveryID: del.id,
 			Target:     del.targetName,
 			Event:      del.event,
-			FireAt:     del.fireAt,
+			FireAt:     del.fireAt.Add(off), // session time
 			Attempts:   del.attempts,
 		})
 	}
@@ -225,6 +254,12 @@ func (d *Dispatcher) CancelSession(sessionID string) {
 	d.mu.Lock()
 	dels := d.pending[sessionID]
 	delete(d.pending, sessionID)
+	if d.exclusive[sessionID] {
+		// Advance still holds the session; it drops the clock on release.
+		d.gone[sessionID] = true
+	} else {
+		delete(d.offsets, sessionID)
+	}
 	d.mu.Unlock()
 	for id, del := range dels {
 		del.canceled.Store(true)
@@ -270,7 +305,9 @@ func (d *Dispatcher) run() {
 				wait = top.fireAt.Sub(now)
 				break
 			}
-			due = append(due, heap.Pop(&d.heap).(*delivery))
+			del := heap.Pop(&d.heap).(*delivery)
+			del.running = true
+			due = append(due, del)
 		}
 		d.mu.Unlock()
 
@@ -305,10 +342,16 @@ func (d *Dispatcher) worker() {
 	}
 }
 
-func (d *Dispatcher) attempt(del *delivery) {
+// attempt performs one delivery attempt and returns it with the resulting
+// status. Workers run it for due deliveries; Advance runs it synchronously.
+func (d *Dispatcher) attempt(del *delivery) (Attempt, string) {
 	if del.canceled.Load() {
-		return
+		d.mu.Lock()
+		del.running = false
+		d.mu.Unlock()
+		return Attempt{}, StatusCanceled
 	}
+	off := d.ClockOffset(del.sessionID)
 	del.attempts++
 	num := del.attempts
 
@@ -344,6 +387,10 @@ func (d *Dispatcher) attempt(del *delivery) {
 		At:             started,
 		RequestHeaders: headers,
 		DurationMillis: time.Since(started).Milliseconds(),
+	}
+	if off != 0 {
+		v := started.Add(off)
+		att.VirtualAt = &v
 	}
 	success := false
 	if err != nil {
@@ -388,14 +435,18 @@ func (d *Dispatcher) attempt(del *delivery) {
 		Int("attempt", num).Int("status", att.StatusCode).
 		Str("error", att.Error).Str("result", status).Msg("webhook attempt")
 
+	// running is cleared under the same lock that requeues or retires the
+	// delivery, so a worker that picks the retry up never sees a stale flag.
 	if status == StatusRetrying {
 		del.fireAt = *next
 		d.mu.Lock()
-		heap.Push(&d.heap, del)
+		del.running = false
+		d.pushLocked(del)
 		d.mu.Unlock()
 		d.kick()
 	} else {
 		d.mu.Lock()
+		del.running = false
 		if m := d.pending[del.sessionID]; m != nil {
 			delete(m, del.id)
 			if len(m) == 0 {
@@ -411,6 +462,7 @@ func (d *Dispatcher) attempt(del *delivery) {
 		del.firstFired = true
 		del.onFirst()
 	}
+	return att, status
 }
 
 // retryDelay implements exponential backoff with +-20% jitter.

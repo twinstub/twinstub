@@ -36,6 +36,7 @@ type Record struct {
 type Attempt struct {
 	Num             int               `json:"num"`
 	At              time.Time         `json:"at"`
+	VirtualAt       *time.Time        `json:"virtual_at,omitempty"` // session time, set when the session clock was advanced
 	RequestHeaders  map[string]string `json:"request_headers"`
 	StatusCode      int               `json:"status_code,omitempty"`
 	Error           string            `json:"error,omitempty"`
