@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	// defaultAdvanceTimeout bounds one advance-time call: it waits for the
-	// receiver to answer every delivery in the window.
+	// defaultAdvanceTimeout bounds one advance-time or deliver call: both
+	// wait for the receiver to answer every delivery they send.
 	defaultAdvanceTimeout = 60 * time.Second
 	maxAdvanceTimeout     = 10 * time.Minute
 )
@@ -64,6 +64,7 @@ func (a *API) Handler() http.Handler {
 		r.Delete("/sessions/{id}", a.sessionDelete)
 		r.Post("/sessions/{id}/advance", a.sessionAdvance)
 		r.Post("/sessions/{id}/advance-time", a.sessionAdvanceTime)
+		r.Post("/sessions/{id}/deliver", a.sessionDeliver)
 		r.Get("/deliveries", a.deliveries)
 		r.Get("/deliveries/{id}", a.deliveryDetail)
 		r.Post("/deliveries/{id}/replay", a.deliveryReplay)
@@ -190,14 +191,9 @@ func (a *API) sessionAdvanceTime(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "bad_duration", "detail": "duration must be like 30s, 2h or 30d"})
 		return
 	}
-	timeout := defaultAdvanceTimeout
-	if body.Timeout != "" {
-		t, err := xtime.ParseDuration(body.Timeout)
-		if err != nil || t <= 0 {
-			writeJSON(w, 400, map[string]any{"error": "bad_timeout", "detail": "timeout must be like 30s or 2m"})
-			return
-		}
-		timeout = min(t, maxAdvanceTimeout)
+	timeout, ok := parseTimeout(w, body.Timeout)
+	if !ok {
+		return
 	}
 	if !a.engine.Touch(id) {
 		writeJSON(w, 404, map[string]any{"error": "session_not_found", "id": id})
@@ -230,6 +226,74 @@ func (a *API) sessionAdvanceTime(w http.ResponseWriter, r *http.Request) {
 		out["session"] = sess.View()
 	}
 	writeJSON(w, 200, out)
+}
+
+// sessionDeliver sends a session's queued webhooks now, in the given order,
+// ignoring their schedule. The session clock does not move.
+func (a *API) sessionDeliver(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Events  []string `json:"events"`
+		Timeout string   `json:"timeout"`
+	}
+	if err := decodeBody(r, &body); err != nil || len(body.Events) == 0 {
+		writeJSON(w, 400, map[string]any{"error": "bad_request", "detail": "expected JSON body {\"events\": [\"payment.completed\", \"payment.pending\"]}; items may also be delivery ids"})
+		return
+	}
+	timeout, ok := parseTimeout(w, body.Timeout)
+	if !ok {
+		return
+	}
+	if !a.engine.Touch(id) {
+		writeJSON(w, 404, map[string]any{"error": "session_not_found", "id": id})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	res, err := a.disp.DeliverNow(ctx, id, body.Events)
+	var notPending *webhook.NotPendingError
+	switch {
+	case errors.Is(err, webhook.ErrSessionBusy):
+		writeJSON(w, 409, map[string]any{"error": "session_busy", "detail": err.Error()})
+		return
+	case errors.As(err, &notPending):
+		writeJSON(w, 422, map[string]any{
+			"error":          "not_pending",
+			"detail":         err.Error(),
+			"item":           notPending.Item,
+			"pending_events": notPending.Pending,
+			"fired":          res.Fired,
+			"hint":           "only queued webhooks can be sent early. An earlier item in the list may queue it, or the session may need a request from your app first. Resend an already delivered event with POST /api/v1/deliveries/{id}/replay.",
+		})
+		return
+	case err != nil:
+		writeJSON(w, 400, map[string]any{"error": "deliver_failed", "detail": err.Error()})
+		return
+	}
+
+	out := map[string]any{"fired": res.Fired}
+	if res.Partial {
+		out["partial"] = true
+		out["reason"] = res.Reason
+	}
+	if sess := a.engine.Store.GetByID(id); sess != nil {
+		out["session"] = sess.View()
+	}
+	writeJSON(w, 200, out)
+}
+
+// parseTimeout reads an optional call budget, writing a 400 on bad input.
+func parseTimeout(w http.ResponseWriter, raw string) (time.Duration, bool) {
+	if raw == "" {
+		return defaultAdvanceTimeout, true
+	}
+	t, err := xtime.ParseDuration(raw)
+	if err != nil || t <= 0 {
+		writeJSON(w, 400, map[string]any{"error": "bad_timeout", "detail": "timeout must be like 30s or 2m"})
+		return 0, false
+	}
+	return min(t, maxAdvanceTimeout), true
 }
 
 func (a *API) deliveries(w http.ResponseWriter, r *http.Request) {

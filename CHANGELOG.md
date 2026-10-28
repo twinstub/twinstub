@@ -20,6 +20,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   session time the delivery is due.
 - Admin API: `virtual_now` and `clock_offset` in session details; delivery
   attempts in an advanced session carry `virtual_at`.
+- `POST /api/v1/sessions/{id}/deliver` sends a session's queued webhooks
+  now, in a given order, to stage races such as "completed arrives before
+  pending". Items are event names or delivery ids; the session clock does
+  not move.
 
 ### Changed
 

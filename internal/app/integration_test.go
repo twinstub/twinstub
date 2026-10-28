@@ -723,3 +723,88 @@ func TestAdvanceTimeErrors(t *testing.T) {
 		}
 	}
 }
+
+// One state queues both pending and completed; the race "completed lands
+// before pending" is the demo bug, staged on demand with deliver.
+const orderFlowScenario = `
+version: 1
+scenarios:
+  - id: order.flow
+    session:
+      key: "body:$.order_id"
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/orders}
+            reply: {status: 201, body: '{"status": "placed"}'}
+            goto: placed
+      placed:
+        enter:
+          - webhook:
+              target: merchant
+              event: payment.pending
+              after: 1h
+              body: '{"event": "payment.pending"}'
+          - webhook:
+              target: merchant
+              event: payment.completed
+              after: 2h
+              body: '{"event": "payment.completed"}'
+`
+
+func TestDeliverOutOfOrder(t *testing.T) {
+	rc := newReceiver(t)
+	files := projectFiles(rc.srv.URL)
+	files["scenarios/payment.yaml"] = orderFlowScenario
+	a := startAppScaled(t, writeProject(t, files), 1.0)
+
+	if code, b := doJSON(t, "POST", a.publicURL()+"/v1/orders",
+		map[string]string{"X-TwinStub-Scenario": "order.flow"}, `{"order_id": "o1"}`); code != 201 {
+		t.Fatalf("create order: %d %s", code, b)
+	}
+	_, b := doJSON(t, "GET", a.adminURL()+"/api/v1/sessions", nil, "")
+	var list struct {
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(b, &list); err != nil || len(list.Sessions) != 1 {
+		t.Fatalf("sessions: %s", b)
+	}
+	url := a.adminURL() + "/api/v1/sessions/" + list.Sessions[0].ID + "/deliver"
+
+	// An event that is not queued: 422 with what is.
+	code, b := doJSON(t, "POST", url, nil, `{"events": ["payment.refunded"]}`)
+	if code != 422 {
+		t.Fatalf("unknown event: %d %s", code, b)
+	}
+	var np struct {
+		PendingEvents []string `json:"pending_events"`
+		Hint          string   `json:"hint"`
+	}
+	if err := json.Unmarshal(b, &np); err != nil {
+		t.Fatal(err)
+	}
+	if len(np.PendingEvents) != 2 || np.PendingEvents[0] != "payment.pending" || np.PendingEvents[1] != "payment.completed" || np.Hint == "" {
+		t.Errorf("not_pending body = %s", b)
+	}
+
+	code, b = doJSON(t, "POST", url, nil, `{"events": ["payment.completed", "payment.pending"]}`)
+	if code != 200 {
+		t.Fatalf("deliver: %d %s", code, b)
+	}
+	h1, h2 := rc.wait(t), rc.wait(t)
+	if h1.Event != "payment.completed" || h2.Event != "payment.pending" {
+		t.Errorf("receiver order: %s, %s; want completed then pending", h1.Event, h2.Event)
+	}
+	verifySignature(t, h1)
+	verifySignature(t, h2)
+
+	if code, _ := doJSON(t, "POST", a.adminURL()+"/api/v1/sessions/nope/deliver", nil, `{"events": ["x"]}`); code != 404 {
+		t.Errorf("unknown session: %d, want 404", code)
+	}
+	if code, _ := doJSON(t, "POST", url, nil, `{"events": []}`); code != 400 {
+		t.Errorf("empty events: %d, want 400", code)
+	}
+}

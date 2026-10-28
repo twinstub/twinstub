@@ -118,6 +118,41 @@ curl -X POST localhost:9090/api/v1/sessions/01JF.../advance-time \
 - `409 session_busy` if another advance on the same session is running;
   `404 session_not_found`; `400` for a bad duration or timeout.
 
+## Deliver now
+
+`POST /api/v1/sessions/{id}/deliver` - send a session's queued webhooks
+immediately, in the order given, ignoring their schedule. This stages
+races on demand: "completed arrives before pending", "the refund lands
+before the capture".
+
+```sh
+curl -X POST localhost:9090/api/v1/sessions/01JF.../deliver \
+  -d '{"events": ["payment.completed", "payment.pending"]}'
+```
+
+```json
+{"fired": [
+   {"delivery_id": "01JF...", "event": "payment.completed", "target": "merchant_callback",
+    "virtual_at": "...", "attempt": 1, "result": "delivered", "status_code": 200},
+   {"delivery_id": "01JG...", "event": "payment.pending", "target": "merchant_callback",
+    "virtual_at": "...", "attempt": 1, "result": "delivered", "status_code": 200}
+ ],
+ "session": {...}}
+```
+
+- Each item is an event name or a delivery id. An event name picks the
+  earliest queued delivery of that event.
+- A transition triggered by an earlier item may queue a later one, so
+  `["payment.succeeded", "payment.chargeback"]` works for a chained flow.
+- The session clock does not move. Webhooks not named keep their schedule;
+  retries of a failed attempt continue on it.
+- An item that is not queued stops the call with `422 not_pending`, listing
+  `pending_events` and what was already sent in `fired`. Only queued
+  webhooks can be sent early; to resend one that was already delivered,
+  use replay.
+- `timeout` works as in advance-time. `409 session_busy`,
+  `404 session_not_found` and `400` behave the same way.
+
 ## Deliveries
 
 `GET /api/v1/deliveries?session=&target=&limit=` - the delivery journal,
