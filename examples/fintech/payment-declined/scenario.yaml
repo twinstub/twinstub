@@ -24,6 +24,7 @@ scenarios:
               after: 1s
               body: |
                 {"event": "payment.declined", "payment_id": "pay_{{ .Session.ID }}",
+                 "created": "{{ .Webhook.At }}",
                  "order_id": "{{ .Session.Key }}", "decline_code": "insufficient_funds"}
         on:
           - when: {method: GET, path: "/v1/payments/{id}"}

@@ -49,6 +49,7 @@ scenarios:
               after: 2s
               body: |
                 {"event": "payment.succeeded", "payment_id": "pay_{{ .Session.ID }}",
+                 "created": "{{ .Webhook.At }}",
                  "order_id": "{{ .Session.Key }}", "amount": {{ .Session.Vars.amount }},
                  "three_ds": "passed"}
             goto: succeeded

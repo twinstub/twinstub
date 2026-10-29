@@ -52,6 +52,7 @@ scenarios:
               after: 2s
               body: |
                 {"event": "payment.refund.partial", "payment_id": "pay_{{ .Session.ID }}",
+                 "created": "{{ .Webhook.At }}",
                  "order_id": "{{ .Session.Key }}"}
         on:
           # A second refund completes the amount: cycle to refunded.
@@ -73,6 +74,7 @@ scenarios:
               after: 2s
               body: |
                 {"event": "payment.refund.full", "payment_id": "pay_{{ .Session.ID }}",
+                 "created": "{{ .Webhook.At }}",
                  "order_id": "{{ .Session.Key }}"}
         on:
           - when: {method: GET, path: "/v1/payments/{id}"}

@@ -30,6 +30,7 @@ scenarios:
               after: 3s
               body: |
                 {"event": "payment.succeeded", "payment_id": "pay_{{ .Session.ID }}",
+                 "created": "{{ .Webhook.At }}",
                  "amount": {{ .Session.Vars.amount }}}
             goto: succeeded
         on:
@@ -44,6 +45,7 @@ scenarios:
               after: 10s   # "30 days later", compressed for the demo
               body: |
                 {"event": "payment.chargeback", "payment_id": "pay_{{ .Session.ID }}",
+                 "created": "{{ .Webhook.At }}",
                  "reason": "fraudulent"}
             goto: chargeback
         on:

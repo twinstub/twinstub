@@ -16,6 +16,7 @@ scenarios:
               after: 5s
               body: |
                 {"event": "kyc.approved", "applicant_id": "{{ .Session.Key }}",
+                 "created": "{{ .Webhook.At }}",
                  "application_id": "kyc_{{ .Session.ID }}"}
             goto: approved
         on:
@@ -47,6 +48,7 @@ scenarios:
               after: 5s
               body: |
                 {"event": "kyc.rejected", "applicant_id": "{{ .Session.Key }}",
+                 "created": "{{ .Webhook.At }}",
                  "application_id": "kyc_{{ .Session.ID }}",
                  "reason": "document_unreadable"}
             goto: rejected
