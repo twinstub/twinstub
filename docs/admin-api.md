@@ -79,8 +79,9 @@ curl -X POST localhost:9090/api/v1/sessions \
 your app's requests (here the order id), so the app's next request joins
 this session. With `state`, the session starts there and that state's
 enter actions run; the initial state's do not. Returns `201` with the
-session, or `200` with the existing one if the key already has a session of
-the same scenario. `409 session_conflict` if the key belongs to another
+session, `virtual_now` and the webhooks the start state queued
+(`pending_webhooks`), or `200` with the existing one if the key already has
+a session of the same scenario. `409 session_conflict` if the key belongs to another
 scenario, `422` for an unknown scenario or state, `400` without a key.
 
 `GET /api/v1/sessions/{id}` - details plus queued webhooks:
@@ -112,7 +113,8 @@ transition). `at` is wall-clock time, `virtual_at` session time.
 webhooks. Frees the session key immediately.
 
 `POST /api/v1/sessions/{id}/advance` - force a transition. Enter actions
-of the target state run (webhooks get scheduled).
+of the target state run (webhooks get scheduled). Returns the session and
+its `pending_webhooks`.
 
 ```sh
 curl -X POST localhost:9090/api/v1/sessions/01JF.../advance \

@@ -250,7 +250,12 @@ func (a *API) sessionCreate(w http.ResponseWriter, r *http.Request) {
 	if !created {
 		status = 200
 	}
-	writeJSON(w, status, map[string]any{"session": sess.View(), "created": created})
+	writeJSON(w, status, map[string]any{
+		"session":          sess.View(),
+		"created":          created,
+		"virtual_now":      time.Now().Add(a.disp.ClockOffset(sess.ID)),
+		"pending_webhooks": a.disp.PendingForSession(sess.ID),
+	})
 }
 
 func (a *API) sessionDetail(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +299,7 @@ func (a *API) sessionAdvance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := a.engine.Store.GetByID(id)
-	writeJSON(w, 200, map[string]any{"session": sess.View()})
+	writeJSON(w, 200, map[string]any{"session": sess.View(), "pending_webhooks": a.disp.PendingForSession(id)})
 }
 
 // sessionAdvanceTime moves one session's virtual clock forward and replays

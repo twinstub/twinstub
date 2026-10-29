@@ -36,6 +36,9 @@ type Options struct {
 	Logger       zerolog.Logger
 	// SweepInterval defaults to 10s; tests shrink it.
 	SweepInterval time.Duration
+	// LoopbackAdmin turns the admin API on whatever the config says and
+	// binds it to 127.0.0.1. The engine embedded in `twinstub mcp` uses it.
+	LoopbackAdmin bool
 }
 
 type App struct {
@@ -104,7 +107,7 @@ func New(opts Options) (*App, error) {
 	pub.Misses = misses
 	a.publicSrv = &http.Server{Handler: pub.Handler()}
 
-	if cfg.Server.Admin.IsEnabled() {
+	if cfg.Server.Admin.IsEnabled() || opts.LoopbackAdmin {
 		configPath := opts.ConfigPath
 		if abs, err := filepath.Abs(configPath); err == nil {
 			configPath = abs
@@ -183,7 +186,11 @@ func (a *App) Start() error {
 		} else if adminPort < 0 {
 			adminPort = 0
 		}
-		aln, err := net.Listen("tcp", fmt.Sprintf(":%d", adminPort))
+		host := ""
+		if a.opts.LoopbackAdmin {
+			host = "127.0.0.1"
+		}
+		aln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, adminPort))
 		if err != nil {
 			_ = a.publicLn.Close()
 			return fmt.Errorf("admin port: %w", err)
@@ -213,6 +220,9 @@ func (a *App) PublicPort() int {
 	}
 	return a.publicLn.Addr().(*net.TCPAddr).Port
 }
+
+// AdminToken is the bearer token the admin API expects, empty for none.
+func (a *App) AdminToken() string { return a.Snapshot().Config.Server.Admin.Token }
 
 func (a *App) AdminPort() int {
 	if a.adminLn == nil {
