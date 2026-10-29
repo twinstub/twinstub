@@ -8,6 +8,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`twinstub mcp`**: an MCP server on stdio for coding agents, with 13
+  tools (status, scenarios, validate and load config, sessions, forced
+  transitions, session time, ordered delivery, the delivery journal,
+  replay modes, 404 diagnostics, reset). It uses the engine at
+  `--admin-url`, or one already running on the default port, or starts one
+  in its own process. See [docs/mcp.md](docs/mcp.md).
 - **Session clocks**: every session runs on its own virtual clock.
   `POST /api/v1/sessions/{id}/advance-time` moves it forward and replays
   everything due in the window in order (webhooks, the transitions they
