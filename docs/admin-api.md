@@ -223,6 +223,7 @@ session's state. Optional body:
 | `mode` | What the receiver gets |
 |---|---|
 | `as_is` (default) | the same body, or `body` if given (Replay and Edit), under a new delivery id |
+| `redeliver` | the same event again: the original body, so the same event id inside it, under a new `X-TwinStub-Delivery` and with a fresh signature. This is how a provider redelivers an event, so it tests whether your handler deduplicates on the event id rather than the delivery header. `body` is not allowed |
 | `duplicate` | a byte-identical repeat: same body and the same `X-TwinStub-Delivery`, `-Event` and `-Session` as the original, with a fresh signature, the way provider retries look. A duplicate of a duplicate still carries the first id. `body` is not allowed |
 | `bad_signature` | a well-formed signature that does not verify (`422 signing_not_configured` for an unsigned target) |
 | `no_signature` | no signature header at all |
@@ -231,7 +232,7 @@ With `"wait": true` the call waits for the first attempt (up to `timeout`,
 default `60s`) and returns `200` with the whole record under `delivery`,
 including the receiver's status code and response body.
 
-Journal records made by a replay carry `mode` (`replay`, `duplicate`,
+Journal records made by a replay carry `mode` (`replay`, `redeliver`, `duplicate`,
 `bad_signature`, `no_signature`) and `replayed_from`; `header_id` shows the
 `X-TwinStub-Delivery` value when it differs from the record id. Every
 attempt carries `signature`: `valid`, `invalid` or `none`.

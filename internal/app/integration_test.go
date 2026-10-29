@@ -865,12 +865,29 @@ func TestReplayModes(t *testing.T) {
 	origID := trigger("merchant")
 	orig := rc.wait(t)
 
+	// redeliver: same body, new delivery id, valid signature.
+	code, out := replay(origID, `{"mode": "redeliver", "wait": true}`)
+	if code != 200 || out.Mode != "redeliver" || out.DeliveryID == origID || len(out.Delivery.Attempts) != 1 || out.Delivery.Attempts[0].Signature != "valid" {
+		t.Fatalf("redeliver: %d %+v", code, out)
+	}
+	h := rc.wait(t)
+	if got := h.Headers.Get("X-TwinStub-Delivery"); got != out.DeliveryID {
+		t.Errorf("redeliver delivery header = %s, want the new id %s", got, out.DeliveryID)
+	}
+	if string(h.Body) != string(orig.Body) {
+		t.Errorf("redeliver body = %s, want %s", h.Body, orig.Body)
+	}
+	verifySignature(t, h)
+	if rec, ok := a.Dispatcher().Log().Get(out.DeliveryID); !ok || rec.Mode != "redeliver" || rec.ReplayedFrom != origID {
+		t.Errorf("redeliver journal record = %+v", rec)
+	}
+
 	// duplicate: same bytes and the same delivery header, fresh valid signature.
-	code, out := replay(origID, `{"mode": "duplicate", "wait": true}`)
+	code, out = replay(origID, `{"mode": "duplicate", "wait": true}`)
 	if code != 200 || out.Mode != "duplicate" || len(out.Delivery.Attempts) != 1 || out.Delivery.Attempts[0].Signature != "valid" {
 		t.Fatalf("duplicate: %d %+v", code, out)
 	}
-	h := rc.wait(t)
+	h = rc.wait(t)
 	if got := h.Headers.Get("X-TwinStub-Delivery"); got != origID {
 		t.Errorf("duplicate delivery header = %s, want the original %s", got, origID)
 	}
@@ -915,6 +932,9 @@ func TestReplayModes(t *testing.T) {
 	}
 	rc.wait(t)
 
+	if code, _ := replay(origID, `{"mode": "redeliver", "body": "{}"}`); code != 400 {
+		t.Errorf("redeliver with an edited body: %d, want 400", code)
+	}
 	if code, _ := replay(origID, `{"mode": "duplicate", "body": "{}"}`); code != 400 {
 		t.Errorf("duplicate with an edited body: %d, want 400", code)
 	}

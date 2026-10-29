@@ -29,6 +29,7 @@ const (
 // scheduled by scenarios or the trigger endpoint have no mode.
 const (
 	ModeReplay       = "replay"        // same body (or an edited one), new delivery id
+	ModeRedeliver    = "redeliver"     // same body, new delivery id: a provider retry
 	ModeDuplicate    = "duplicate"     // byte-identical, including X-TwinStub-Delivery
 	ModeBadSignature = "bad_signature" // signature that does not verify
 	ModeNoSignature  = "no_signature"  // signature header omitted

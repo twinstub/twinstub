@@ -498,6 +498,12 @@ func (a *API) deliveryReplay(w http.ResponseWriter, r *http.Request) {
 	switch body.Mode {
 	case "", "as_is":
 		req.Mode = webhook.ModeReplay
+	case webhook.ModeRedeliver:
+		if body.Body != nil {
+			writeJSON(w, 400, map[string]any{"error": "bad_request", "detail": "a redelivery resends the original body; drop \"body\" or use mode as_is"})
+			return
+		}
+		req.Mode = webhook.ModeRedeliver
 	case webhook.ModeDuplicate:
 		if body.Body != nil {
 			writeJSON(w, 400, map[string]any{"error": "bad_request", "detail": "a duplicate resends the original bytes; drop \"body\" or use mode as_is"})
@@ -517,7 +523,7 @@ func (a *API) deliveryReplay(w http.ResponseWriter, r *http.Request) {
 	case webhook.ModeNoSignature:
 		req.Mode, req.NoSign = webhook.ModeNoSignature, true
 	default:
-		writeJSON(w, 400, map[string]any{"error": "bad_mode", "detail": "mode must be as_is, duplicate, bad_signature or no_signature"})
+		writeJSON(w, 400, map[string]any{"error": "bad_mode", "detail": "mode must be as_is, redeliver, duplicate, bad_signature or no_signature"})
 		return
 	}
 	timeout, ok := parseTimeout(w, body.Timeout)
