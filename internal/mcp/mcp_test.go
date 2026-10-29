@@ -370,3 +370,23 @@ func TestToolsListMatchesSDKDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestInputSchemasArePortable(t *testing.T) {
+	cs := connect(t, newServer(t, Options{AdminURL: closedURL(t)}))
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		props, _ := tool.InputSchema.(map[string]any)["properties"].(map[string]any)
+		for name, p := range props {
+			if _, ok := p.(map[string]any)["type"].(string); !ok {
+				t.Errorf("%s.%s: type is %v, want a single type", tool.Name, name, p.(map[string]any)["type"])
+			}
+		}
+	}
+	text, isErr := call(t, cs, "twinstub_replay_delivery", map[string]any{"delivery": "d1", "mode": "sideways"})
+	if !isErr || !strings.Contains(text, "redeliver") {
+		t.Errorf("bad mode: %v %q", isErr, text)
+	}
+}

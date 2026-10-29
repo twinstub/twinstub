@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/twinstub/twinstub/internal/version"
@@ -34,6 +36,7 @@ type toolDef struct {
 	readOnly    bool
 	destructive bool
 	idempotent  bool
+	enums       map[string][]any // allowed values of string arguments
 }
 
 func (d toolDef) tool() *sdk.Tool {
@@ -56,7 +59,9 @@ func (d toolDef) tool() *sdk.Tool {
 // add registers a tool whose handler returns a value to send back as
 // compact JSON, or an error that already says what to do next.
 func add[In any](s *Server, d toolDef, h func(context.Context, In) (any, error)) {
-	sdk.AddTool(s.sdk, d.tool(), func(ctx context.Context, _ *sdk.CallToolRequest, in In) (*sdk.CallToolResult, any, error) {
+	tool := d.tool()
+	tool.InputSchema = inputSchema[In](d.enums)
+	sdk.AddTool(s.sdk, tool, func(ctx context.Context, _ *sdk.CallToolRequest, in In) (*sdk.CallToolResult, any, error) {
 		out, err := h(ctx, in)
 		if err != nil {
 			return nil, nil, s.explain(err)
@@ -67,6 +72,29 @@ func add[In any](s *Server, d toolDef, h func(context.Context, In) (any, error))
 		}
 		return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: string(data)}}}, nil, nil
 	})
+}
+
+// inputSchema infers the argument schema and makes it portable: Go slices
+// and pointers infer as ["null", T], a type list some clients reject, and
+// optional arguments are simply left out, so null is never needed.
+func inputSchema[In any](enums map[string][]any) *jsonschema.Schema {
+	schema, err := jsonschema.For[In](nil)
+	if err != nil {
+		panic(fmt.Sprintf("input schema of %T: %v", *new(In), err))
+	}
+	for name, prop := range schema.Properties {
+		if len(prop.Types) == 2 && slices.Contains(prop.Types, "null") {
+			prop.Type = prop.Types[0]
+			if prop.Type == "null" {
+				prop.Type = prop.Types[1]
+			}
+			prop.Types = nil
+		}
+		if values, ok := enums[name]; ok {
+			prop.Enum = values
+		}
+	}
+	return schema
 }
 
 type (
@@ -164,10 +192,12 @@ var tools = struct {
 	},
 	listDeliveries: toolDef{
 		name: "twinstub_list_deliveries", title: "List deliveries", readOnly: true, idempotent: true,
+		enums:       map[string][]any{"status": {"pending", "retrying", "delivered", "failed", "canceled"}},
 		description: "Webhook delivery journal, newest first: event, mode, attempts, URL, the receiver's status code and whether the signature was valid. Pass delivery to see one in full, including the bodies.",
 	},
 	replayDelivery: toolDef{
 		name: "twinstub_replay_delivery", title: "Replay delivery",
+		enums:       map[string][]any{"mode": {"as_is", "redeliver", "duplicate", "bad_signature", "no_signature"}},
 		description: "Send a delivered webhook again. Modes: as_is (optionally with an edited body), redeliver (same event, new delivery id: the usual idempotency test), duplicate (byte-identical, same delivery id), bad_signature, no_signature. Waits for the receiver's answer by default.",
 	},
 	explainMiss: toolDef{
