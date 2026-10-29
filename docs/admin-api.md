@@ -160,6 +160,9 @@ curl -X POST localhost:9090/api/v1/sessions/01JF.../advance-time \
   reject old timestamps, so a signature from "30 days later" would fail.
 - The session TTL stays on wall-clock time: advancing 30 days does not
   expire the session.
+- Only TwinStub's time moves. Your app keeps its own clock, so logic on
+  your side that depends on time (a refund window, an expiry check) needs
+  an injectable clock to be tested the same way.
 - `409 session_busy` if another advance on the same session is running;
   `404 session_not_found`; `400` for a bad duration or timeout.
 
