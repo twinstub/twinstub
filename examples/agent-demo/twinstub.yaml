@@ -1,0 +1,71 @@
+version: 1
+
+server:
+  port: 8080
+  admin:
+    port: 9090
+
+# Acme Pay, the payment provider of the demo service. Its webhooks go to
+# the service's endpoint, signed the way Acme Pay signs them.
+targets:
+  agent_demo:
+    url: ${DEMO_WEBHOOK_URL:-http://localhost:3000/webhooks/acme}
+    signing:
+      algorithm: hmac-sha256
+      secret: ${ACME_WEBHOOK_SECRET:-whsec_demo}
+      header: Acme-Signature
+      format: "t={timestamp},v1={signature}"
+    retry:
+      attempts: 3
+      backoff: 2s
+
+scenarios:
+  - id: acme.payment
+    description: "A payment is reported pending, then completed, and is charged back 30 days later"
+    session:
+      key: "body:$.reference"
+      ttl: 1h
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply:
+              status: 201
+              body: '{"id": "pay_{{ .Session.ID }}", "reference": "{{ .Session.Key }}", "amount": {{ .Request.Body.amount }}, "status": "pending"}'
+            set:
+              amount: "{{ .Request.Body.amount }}"
+            goto: processing
+      # Acme Pay reports pending, then completed. Both are queued when the
+      # payment is created, so their order can be staged on purpose.
+      processing:
+        enter:
+          - webhook:
+              target: agent_demo
+              event: payment.pending
+              after: 30s
+              body: |
+                {"id": "evt_pending_{{ .Session.ID }}", "type": "payment.pending",
+                 "created": "{{ .Webhook.At }}",
+                 "data": {"payment_id": "pay_{{ .Session.ID }}", "reference": "{{ .Session.Key }}", "amount": {{ .Session.Vars.amount }}}}
+          - webhook:
+              target: agent_demo
+              event: payment.completed
+              after: 2m
+              body: |
+                {"id": "evt_completed_{{ .Session.ID }}", "type": "payment.completed",
+                 "created": "{{ .Webhook.At }}",
+                 "data": {"payment_id": "pay_{{ .Session.ID }}", "reference": "{{ .Session.Key }}", "amount": {{ .Session.Vars.amount }}}}
+            goto: completed
+      completed:
+        enter:
+          - webhook:
+              target: agent_demo
+              event: payment.chargeback
+              after: 30d
+              body: |
+                {"id": "evt_chargeback_{{ .Session.ID }}", "type": "payment.chargeback",
+                 "created": "{{ .Webhook.At }}",
+                 "data": {"payment_id": "pay_{{ .Session.ID }}", "reference": "{{ .Session.Key }}", "amount": {{ .Session.Vars.amount }}}}
+            goto: charged_back
+      charged_back: {}
