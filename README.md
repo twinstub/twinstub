@@ -114,16 +114,43 @@ watch its status change. That whole flow is [one YAML file](internal/scaffold/te
   field, header, query or path param), session variables, sliding TTL.
 - **Webhook chains**: delayed, HMAC-signed (Stripe-compatible format),
   exponential retries with jitter, a delivery journal, replay and edit.
-- **Time compression**: `--time-scale 0.01` turns 30 days into ~7 hours;
-  `--seed` makes random template functions reproducible in CI.
+- **Session clocks**: move one session 30 days forward and everything due
+  in that window is delivered in order, retries included. Or compress all
+  intervals with `--time-scale 0.01`; `--seed` makes random template
+  functions reproducible in CI.
+- **Ordering and redelivery on demand**: send queued webhooks in any order
+  (`completed` before `pending`), redeliver an event under a new delivery
+  id, send a byte-identical duplicate, a bad signature or none.
 - **Admin API** on a separate port: sessions, scenarios, delivery journal,
-  replay, manual trigger, reload.
+  replay, ordered delivery, session time, 404 history, reset, reload.
+- **MCP server** for coding agents: `twinstub mcp`, see below.
 - **Hot reload** that never breaks active sessions: they finish on the
   config version they started with.
 - **Diagnostic 404s**: every miss lists the closest matchers and the exact
   reason each one rejected the request.
 - **Chaos tools**: `status: 0` drops the TCP connection, latency of 30s+,
   arbitrary 5xx.
+
+## Use with AI coding agents
+
+When an agent writes a webhook handler, it can test the cases that break
+in production instead of only the happy path. `twinstub mcp` is an MCP
+server in the same binary: the agent starts sessions, delivers events out
+of order, redelivers them, breaks signatures, moves time forward, and then
+checks the state of your app.
+
+For Claude Code, install the [TwinStub plugin](https://github.com/twinstub/claude-plugin):
+
+```
+/plugin marketplace add twinstub/claude-plugin
+/plugin install twinstub@twinstub
+```
+
+It adds the MCP server and a skill that tells the agent when to use it and
+to judge results by your app's state, not by HTTP 200s. Other MCP clients
+run `twinstub mcp` directly; see [docs/mcp.md](docs/mcp.md).
+[examples/agent-demo](examples/agent-demo/) is a small service with
+webhook bugs that every status code check misses.
 
 ## Honest comparison
 
@@ -146,6 +173,7 @@ versionable simulation of event-driven API products.
 
 - [DSL reference](docs/dsl.md) - every field of the YAML format
 - [Admin API](docs/admin-api.md)
+- [MCP server](docs/mcp.md) - tools for coding agents
 - [Fintech scenario catalog](examples/fintech/) - 8 ready-made flows:
   success, decline, 3DS, chargeback, refunds, KYC, broken signatures,
   chaos
@@ -160,6 +188,7 @@ twinstub serve [-c twinstub.yaml] [--port N] [--admin-port N]
                [--log-level L] [--allow-private-targets]
 twinstub validate [-c twinstub.yaml]   # exit 0/1, errors with file and field
 twinstub init [dir]                    # scaffold a working example
+twinstub mcp [--admin-url URL] [-c twinstub.yaml]   # MCP server on stdio
 twinstub version
 ```
 
