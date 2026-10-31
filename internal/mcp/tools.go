@@ -318,7 +318,12 @@ func (s *Server) loadConfig(ctx context.Context, in loadArgs) (any, error) {
 		return s.loadedLocked(ctx, false)
 	}
 
+	// Keep the port the app already points at, unless the engine had no
+	// config yet: then its port was random and the config's port applies.
 	port := s.app.PublicPort()
+	if s.configPath == "" {
+		port = 0
+	}
 	if err := s.stopEmbeddedLocked(ctx); err != nil {
 		s.opts.Logger.Warn().Err(err).Msg("embedded engine did not stop cleanly")
 	}

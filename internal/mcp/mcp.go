@@ -169,6 +169,12 @@ func (s *Server) startEmbedded(path string, explicit bool, port int) error {
 		if abs, err = s.placeholderConfig(); err != nil {
 			return err
 		}
+		// An engine with nothing loaded keeps off the default port, so an
+		// agent session in an unrelated project does not take 8080 from a
+		// project that needs it.
+		if port == 0 {
+			port = -1
+		}
 	}
 
 	if port == 0 {

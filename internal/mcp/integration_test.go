@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -152,4 +154,33 @@ func firedResultOf(out map[string]any, i int) any {
 	}
 	m, _ := list[i].(map[string]any)
 	return m["result"]
+}
+
+// TestEmptyEngineKeepsOffDefaultPort covers a plugin installed for every
+// project: a session without a config must not hold 8080, and the first
+// config it loads gets its own port.
+func TestEmptyEngineKeepsOffDefaultPort(t *testing.T) {
+	s := newServer(t, Options{ConfigPath: filepath.Join(t.TempDir(), "twinstub.yaml")})
+	cs := connect(t, s)
+	if p := s.app.PublicPort(); p == 8080 {
+		t.Fatalf("an engine without a config took port %d", p)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	rc, _ := receiver(t)
+	path := writeConfig(t, rc.URL)
+	data, _ := os.ReadFile(path)
+	cfg := strings.Replace(string(data), "version: 1\n", fmt.Sprintf("version: 1\nserver:\n  port: %d\n", want), 1)
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := callOK(t, cs, "twinstub_load_config", map[string]any{"path": path})
+	if out["public_port"] != float64(want) {
+		t.Errorf("load_config = %v, want public_port %d", out, want)
+	}
 }
