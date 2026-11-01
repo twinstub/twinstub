@@ -6,6 +6,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-01
+
 ### Added
 
 - **`twinstub mcp`**: an MCP server on stdio for coding agents, with 13
@@ -91,5 +93,6 @@ First open-source release of TwinStub OSS core.
 - Example catalog: quickstart project plus eight fintech scenarios, and
   Go / Node webhook signature-verification snippets.
 
-[Unreleased]: https://github.com/twinstub/twinstub/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/twinstub/twinstub/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/twinstub/twinstub/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/twinstub/twinstub/releases/tag/v1.0.0
