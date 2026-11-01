@@ -60,9 +60,14 @@ func (nullSched) ClockOffset(string) time.Duration        { return 0 }
 
 func testServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return testServerWith(t, serverConfig)
+}
+
+func testServerWith(t *testing.T, yaml string) *httptest.Server {
+	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "twinstub.yaml")
-	if err := os.WriteFile(path, []byte(serverConfig), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, err := config.Load(path)
@@ -194,6 +199,59 @@ func Test404Diagnostics(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("candidate reasons unhelpful: %s", b)
+	}
+}
+
+// A request that a scenario rule would take, sent before any session
+// exists, says how to start one instead of claiming nothing matched.
+func Test404NamesMissingSession(t *testing.T) {
+	ts := testServerWith(t, `
+version: 1
+scenarios:
+  - id: acme.payment
+    session: {key: "body:$.reference"}
+    initial: new
+    states:
+      new:
+        on:
+          - when: {method: POST, path: /v1/payments}
+            reply: {status: 201, body: '{}'}
+            goto: done
+      done: {}
+`)
+	resp, err := http.Post(ts.URL+"/v1/payments", "application/json", strings.NewReader(`{"reference": "u1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	var diag struct {
+		Detail    string `json:"detail"`
+		NoSession struct {
+			Scenario string `json:"scenario"`
+			State    string `json:"state"`
+			KeyValue string `json:"key_value"`
+			Note     string `json:"note"`
+		} `json:"no_session"`
+	}
+	if err := json.Unmarshal(b, &diag); err != nil {
+		t.Fatalf("bad diagnostics json: %s", b)
+	}
+	ns := diag.NoSession
+	if resp.StatusCode != 404 || !strings.Contains(diag.Detail, "no session") || ns.Scenario != "acme.payment" || ns.State != "new" || ns.KeyValue != "u1" ||
+		!strings.Contains(ns.Note, "X-TwinStub-Scenario: acme.payment") || !strings.Contains(ns.Note, "twinstub_start_session") {
+		t.Errorf("404 = %d %s", resp.StatusCode, b)
+	}
+
+	// A request no rule would take keeps the plain answer.
+	resp2, err := http.Post(ts.URL+"/v1/refunds", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	b2, _ := io.ReadAll(resp2.Body)
+	if strings.Contains(string(b2), "no_session") {
+		t.Errorf("unrelated 404 mentions a session: %s", b2)
 	}
 }
 

@@ -43,6 +43,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `GET /api/v1/misses` keeps the last 50 requests that matched nothing,
   with the same diagnostics as their 404, so a swallowed 404 can still be
   explained.
+- A 404 for a request that a scenario rule would take, sent before any
+  session exists, names the scenario and key in `no_session` and says how
+  to start the session, instead of reporting that nothing matched.
 - `POST /api/v1/reset` deletes every session and queued webhook and, by
   default, clears the delivery journal and the 404 log.
 - `GET /api/v1/deliveries` filters by `status` and pages with `limit`,

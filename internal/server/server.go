@@ -4,6 +4,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -214,6 +215,20 @@ func (s *Server) write404(w http.ResponseWriter, snap *snapshot.Snapshot, mreq *
 			"state":    out.State,
 			"note":     "request matched an active session but no rule of the current state; it then fell through to stateless endpoints",
 		}
+	} else if sc, state := sessionlessRule(snap, mreq); sc != nil {
+		// The usual first mistake: the app calls the provider before a
+		// session exists, and an app under test does not send our header.
+		body["detail"] = fmt.Sprintf("a rule of scenario %s matches, but this request belongs to no session", sc.ID)
+		nos := map[string]any{
+			"scenario": sc.ID,
+			"state":    state,
+			"key":      sc.KeySelector.String(),
+			"note":     fmt.Sprintf("start a session first (POST /api/v1/sessions with {\"scenario\": %q, \"key\": ...}, or twinstub_start_session), or send the header %s: %s on the first request", sc.ID, snap.ScenarioHeader, sc.ID),
+		}
+		if key, ok := sc.KeySelector.Extract(mreq, sc); ok {
+			nos["key_value"] = key
+		}
+		body["no_session"] = nos
 	}
 	if len(candidates) > 0 {
 		body["candidates"] = candidates
@@ -222,6 +237,36 @@ func (s *Server) write404(w http.ResponseWriter, snap *snapshot.Snapshot, mreq *
 		s.Misses.Add(time.Now(), body)
 	}
 	writeJSON(w, 404, body)
+}
+
+// sessionlessRule finds a scenario rule that would take a request which
+// reached no session, preferring the scenario's initial state.
+func sessionlessRule(snap *snapshot.Snapshot, mreq *match.Request) (*snapshot.Scenario, string) {
+	for _, sc := range snap.Scenarios {
+		if matchesState(sc.States[sc.Initial], mreq) {
+			return sc, sc.Initial
+		}
+	}
+	for _, sc := range snap.Scenarios {
+		for _, name := range sc.StateNames {
+			if matchesState(sc.States[name], mreq) {
+				return sc, name
+			}
+		}
+	}
+	return nil, ""
+}
+
+func matchesState(st *snapshot.State, mreq *match.Request) bool {
+	if st == nil {
+		return false
+	}
+	for _, rule := range st.On {
+		if _, ok := rule.Matcher.Match(mreq); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

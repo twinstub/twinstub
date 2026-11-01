@@ -24,7 +24,12 @@ go run .                 # the service on :3000, calling Acme Pay at localhost:8
 twinstub serve           # Acme Pay, in another terminal (or let twinstub mcp start it)
 ```
 
+TwinStub plays Acme Pay per session, one for each payment reference. The
+service does not send TwinStub's scenario header, so start the session
+first:
+
 ```sh
+curl -s -X POST localhost:9090/api/v1/sessions -d '{"scenario": "acme.payment", "key": "u1"}'
 curl -s -X POST localhost:3000/subscribe -d '{"user": "u1", "plan": "basic"}'
 curl -s localhost:3000/accounts/u1
 ```

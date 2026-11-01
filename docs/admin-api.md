@@ -266,6 +266,12 @@ session if the request reached one, and the closest candidates with the
 reason each one rejected the request. Useful when your app swallowed the
 404 and you want to know why after the fact.
 
+When a scenario rule would take the request but no session exists for it
+(the app called before a session was started, and it does not send the
+scenario header), the entry says so in `no_session`: the scenario, the
+state, the key selector, the key value found in the request, and how to
+start the session.
+
 ```json
 {"misses": [{
   "at": "2026-10-28T10:00:00Z", "error": "no_match",
