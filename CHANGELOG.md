@@ -6,6 +6,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `twinstub mcp` chooses its engine on the first tool call that needs one,
+  not at startup. Sessions that never use TwinStub run no engine, and an
+  engine started with `twinstub serve` after the session began is found.
+
 ## [1.1.0] - 2026-11-01
 
 ### Added

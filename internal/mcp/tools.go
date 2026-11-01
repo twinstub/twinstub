@@ -227,7 +227,10 @@ func (s *Server) register() {
 }
 
 func (s *Server) status(ctx context.Context) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	h, err := cl.health(ctx)
 	if err != nil {
@@ -266,7 +269,10 @@ func (s *Server) status(ctx context.Context) (any, error) {
 }
 
 func (s *Server) listScenarios(ctx context.Context, in scenarioArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	q := url.Values{}
 	if in.Name != "" {
@@ -302,6 +308,9 @@ func (s *Server) loadConfig(ctx context.Context, in loadArgs) (any, error) {
 		return nil, fmt.Errorf("%s was not loaded: %s. Fix the file (twinstub_validate_config lists every error) and load it again", abs, firstErrors(check.Errors, 3))
 	}
 
+	if err := s.resolve(ctx); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mode == ModeExternal {
@@ -359,7 +368,10 @@ func (s *Server) loadedLocked(ctx context.Context, restarted bool) (any, error) 
 }
 
 func (s *Server) startSession(ctx context.Context, in startArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	out, err := cl.do(ctx, http.MethodPost, "/sessions", nil, map[string]any{"scenario": in.Scenario, "key": in.Key, "state": in.InitialState})
 	if err != nil {
@@ -373,7 +385,10 @@ func (s *Server) startSession(ctx context.Context, in startArgs) (any, error) {
 }
 
 func (s *Server) getSession(ctx context.Context, in sessionArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	out, err := cl.do(ctx, http.MethodGet, "/sessions/"+url.PathEscape(in.Session), nil, nil)
 	if err != nil {
@@ -393,7 +408,10 @@ func (s *Server) getSession(ctx context.Context, in sessionArgs) (any, error) {
 }
 
 func (s *Server) trigger(ctx context.Context, in triggerArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	out, err := cl.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(in.Session)+"/advance", nil, map[string]any{"state": in.State})
 	if err != nil {
@@ -405,7 +423,10 @@ func (s *Server) trigger(ctx context.Context, in triggerArgs) (any, error) {
 }
 
 func (s *Server) advanceTime(ctx context.Context, in advanceArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	out, err := cl.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(in.Session)+"/advance-time", nil,
 		map[string]any{"duration": in.Duration, "timeout": s.opts.Timeout.String()})
@@ -416,7 +437,10 @@ func (s *Server) advanceTime(ctx context.Context, in advanceArgs) (any, error) {
 }
 
 func (s *Server) deliver(ctx context.Context, in deliverArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	out, err := cl.do(ctx, http.MethodPost, "/sessions/"+url.PathEscape(in.Session)+"/deliver", nil,
 		map[string]any{"events": in.Events, "timeout": s.opts.Timeout.String()})
@@ -445,7 +469,10 @@ func firedResult(out map[string]any, keep ...string) map[string]any {
 }
 
 func (s *Server) listDeliveries(ctx context.Context, in listArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	if in.Delivery != "" {
 		rec, err := cl.do(ctx, http.MethodGet, "/deliveries/"+url.PathEscape(in.Delivery), nil, nil)
@@ -484,7 +511,10 @@ func (s *Server) listDeliveries(ctx context.Context, in listArgs) (any, error) {
 }
 
 func (s *Server) replayDelivery(ctx context.Context, in replayArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	wait := in.Wait == nil || *in.Wait
 	body := map[string]any{"mode": in.Mode, "wait": wait, "timeout": s.opts.Timeout.String()}
@@ -505,7 +535,10 @@ func (s *Server) replayDelivery(ctx context.Context, in replayArgs) (any, error)
 }
 
 func (s *Server) explainMiss(ctx context.Context, in missArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	limit := in.Limit
 	if limit <= 0 {
@@ -522,7 +555,10 @@ func (s *Server) explainMiss(ctx context.Context, in missArgs) (any, error) {
 }
 
 func (s *Server) reset(ctx context.Context, in resetArgs) (any, error) {
-	cl, done := s.engine()
+	cl, done, err := s.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
 	defer done()
 	if in.Session != "" {
 		return cl.do(ctx, http.MethodDelete, "/sessions/"+url.PathEscape(in.Session), nil, nil)

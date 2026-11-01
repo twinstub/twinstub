@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,15 +125,54 @@ func TestExplicitURLNeverFallsBack(t *testing.T) {
 	}
 }
 
+// TestEngineStartsOnFirstCall covers a plugin installed for every project:
+// the server starts no engine until a tool needs one, so sessions that
+// never use TwinStub run none, and an engine started later is still found.
+func TestEngineStartsOnFirstCall(t *testing.T) {
+	started := func(s *Server) bool {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		return s.ready || s.app != nil
+	}
+
+	// No engine anywhere: listing tools and validating start nothing; the
+	// first call that needs an engine embeds one.
+	s := newServer(t, Options{PublicPort: -1})
+	cs := connect(t, s)
+	if _, err := cs.ListTools(context.Background(), &sdk.ListToolsParams{}); err != nil {
+		t.Fatal(err)
+	}
+	callOK(t, cs, "twinstub_validate_config", map[string]any{"content": "version: 1\n"})
+	if started(s) {
+		t.Fatal("an engine started before any tool needed one")
+	}
+	if out := callOK(t, cs, "twinstub_status", nil); out["mode"] != ModeEmbedded || s.app == nil {
+		t.Errorf("status = %v", out)
+	}
+
+	// The default address is taken but serves nothing until the engine
+	// starts after the session did.
+	admin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		healthReply("1.1.0")(w, r)
+	}))
+	t.Cleanup(admin.Close)
+	s = newServer(t, Options{ProbeURL: "http://" + admin.Listener.Addr().String()})
+	cs = connect(t, s)
+	admin.Start()
+	if out := callOK(t, cs, "twinstub_status", nil); out["mode"] != ModeExternal {
+		t.Errorf("status = %v; want the engine started after the session", out)
+	}
+}
+
 func TestUsesRunningEngineWhenNoURL(t *testing.T) {
 	admin := fakeAdmin(t, map[string]func(http.ResponseWriter, *http.Request){
 		"GET /api/v1/health": healthReply("1.1.0"),
 	})
 	s := newServer(t, Options{ProbeURL: admin.URL})
+	out := callOK(t, connect(t, s), "twinstub_status", nil)
 	if s.mode != ModeExternal || s.app != nil {
 		t.Fatalf("mode = %s, want external without an embedded engine", s.mode)
 	}
-	out := callOK(t, connect(t, s), "twinstub_status", nil)
 	if out["mode"] != ModeExternal || out["admin_url"] != admin.URL || out["public_port"] != float64(8080) || out["config_path"] != "/srv/twinstub.yaml" {
 		t.Errorf("status = %v", out)
 	}
@@ -142,7 +182,7 @@ func TestProbeIgnoresOtherServices(t *testing.T) {
 	other := fakeAdmin(t, map[string]func(http.ResponseWriter, *http.Request){
 		"GET /api/v1/health": reply(200, `{"status": "ok"}`),
 	})
-	s := newServer(t, Options{ProbeURL: other.URL, PublicPort: -1})
+	s := resolved(t, newServer(t, Options{ProbeURL: other.URL, PublicPort: -1}))
 	if s.mode != ModeEmbedded {
 		t.Errorf("mode = %s; a service without a TwinStub version is not an engine", s.mode)
 	}
@@ -152,7 +192,7 @@ func TestProbeIgnoresOtherServices(t *testing.T) {
 func TestEmbeddedWhenNothingAnswers(t *testing.T) {
 	rc, _ := receiver(t)
 	cfg := writeConfig(t, rc.URL)
-	s := newServer(t, Options{ConfigPath: cfg, ConfigSet: true, PublicPort: -1})
+	s := resolved(t, newServer(t, Options{ConfigPath: cfg, ConfigSet: true, PublicPort: -1}))
 	if s.mode != ModeEmbedded || s.app == nil {
 		t.Fatalf("mode = %s, want embedded", s.mode)
 	}

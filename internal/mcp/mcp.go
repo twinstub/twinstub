@@ -66,9 +66,10 @@ type Server struct {
 	explicit bool // AdminURL was given
 	mode     string
 
-	mu  sync.RWMutex // guards everything below; load_config takes it exclusively
-	cl  *client
-	app *app.App // embedded mode only
+	mu    sync.RWMutex // guards everything below; load_config takes it exclusively
+	ready bool         // the engine is chosen and, in embedded mode, running
+	cl    *client
+	app   *app.App // embedded mode only
 
 	configPath string // absolute; empty when the embedded engine runs without a config
 	configErr  string // why the requested config could not be loaded
@@ -78,8 +79,8 @@ type Server struct {
 	sdk *sdk.Server
 }
 
-// New picks the launch mode, starts the embedded engine if that is the
-// mode, and registers the tools.
+// New registers the tools. An explicit admin URL fixes the engine at once;
+// otherwise the engine is chosen by the first tool call that needs one.
 func New(ctx context.Context, opts Options) (*Server, error) {
 	if opts.Timeout <= 0 {
 		opts.Timeout = DefaultTimeout
@@ -89,21 +90,11 @@ func New(ctx context.Context, opts Options) (*Server, error) {
 	}
 	s := &Server{opts: opts}
 
-	switch {
-	case opts.AdminURL != "":
-		s.explicit, s.mode = true, ModeExternal
+	if opts.AdminURL != "" {
+		s.explicit, s.mode, s.ready = true, ModeExternal, true
 		s.cl = newClient(opts.AdminURL, opts.Token, s.httpTimeout())
 		if _, err := s.cl.health(ctx); err != nil {
 			opts.Logger.Warn().Err(err).Msg("the engine at --admin-url does not answer yet; tools will report it until it does")
-		}
-	case s.probe(ctx):
-		s.mode = ModeExternal
-		s.cl = newClient(opts.ProbeURL, opts.Token, s.httpTimeout())
-		opts.Logger.Info().Str("admin_url", opts.ProbeURL).Msg("using the running engine")
-	default:
-		s.mode = ModeEmbedded
-		if err := s.startEmbedded(opts.ConfigPath, opts.ConfigSet, opts.PublicPort); err != nil {
-			return nil, err
 		}
 	}
 
@@ -254,11 +245,46 @@ func (s *Server) stopEmbeddedLocked(ctx context.Context) error {
 	return err
 }
 
+// resolve chooses the engine on the first call that needs one: the engine
+// at the default address if it answers, otherwise one started in this
+// process. Waiting until then keeps a plugin installed for every project
+// from running an engine in sessions that never use TwinStub, and picks up
+// an engine started after the session began. A failed start is retried on
+// the next call.
+func (s *Server) resolve(ctx context.Context) error {
+	s.mu.RLock()
+	ready := s.ready
+	s.mu.RUnlock()
+	if ready {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ready {
+		return nil
+	}
+	if s.probe(ctx) {
+		s.mode = ModeExternal
+		s.cl = newClient(s.opts.ProbeURL, s.opts.Token, s.httpTimeout())
+		s.opts.Logger.Info().Str("admin_url", s.opts.ProbeURL).Msg("using the running engine")
+	} else {
+		if err := s.startEmbedded(s.opts.ConfigPath, s.opts.ConfigSet, s.opts.PublicPort); err != nil {
+			return err
+		}
+		s.mode = ModeEmbedded
+	}
+	s.ready = true
+	return nil
+}
+
 // engine returns the client for one tool call; the read lock keeps
 // load_config from swapping the engine underneath it.
-func (s *Server) engine() (*client, func()) {
+func (s *Server) engine(ctx context.Context) (*client, func(), error) {
+	if err := s.resolve(ctx); err != nil {
+		return nil, nil, err
+	}
 	s.mu.RLock()
-	return s.cl, s.mu.RUnlock
+	return s.cl, s.mu.RUnlock, nil
 }
 
 // versionOK reports whether an engine version has every endpoint the tools

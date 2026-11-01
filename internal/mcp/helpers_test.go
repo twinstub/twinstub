@@ -121,6 +121,17 @@ func newServer(t *testing.T, opts Options) *Server {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+	return s
+}
+
+// resolved makes the server choose its engine, as the first tool call that
+// needs one would.
+func resolved(t *testing.T, s *Server) *Server {
+	t.Helper()
+	if err := s.resolve(context.Background()); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
 	return s
 }
 

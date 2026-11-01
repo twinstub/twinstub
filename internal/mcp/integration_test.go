@@ -104,7 +104,7 @@ func TestExplainMissEmbedded(t *testing.T) {
 
 func TestLoadConfigEmbedded(t *testing.T) {
 	rc, _ := receiver(t)
-	s := newServer(t, Options{ConfigPath: writeConfig(t, rc.URL), ConfigSet: true, PublicPort: -1})
+	s := resolved(t, newServer(t, Options{ConfigPath: writeConfig(t, rc.URL), ConfigSet: true, PublicPort: -1}))
 	cs := connect(t, s)
 	port := s.app.PublicPort()
 	callOK(t, cs, "twinstub_start_session", map[string]any{"scenario": "payment.chargeback", "key": "ord_1"})
@@ -160,7 +160,7 @@ func firedResultOf(out map[string]any, i int) any {
 // project: a session without a config must not hold 8080, and the first
 // config it loads gets its own port.
 func TestEmptyEngineKeepsOffDefaultPort(t *testing.T) {
-	s := newServer(t, Options{ConfigPath: filepath.Join(t.TempDir(), "twinstub.yaml")})
+	s := resolved(t, newServer(t, Options{ConfigPath: filepath.Join(t.TempDir(), "twinstub.yaml")}))
 	cs := connect(t, s)
 	if p := s.app.PublicPort(); p == 8080 {
 		t.Fatalf("an engine without a config took port %d", p)

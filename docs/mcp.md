@@ -53,9 +53,15 @@ Desktop on macOS and Windows has it already.
    process (mode `embedded`) with `--config` (default `twinstub.yaml`). Its
    admin API listens on a random port on 127.0.0.1; its public port is the
    config's, or a free one if that is busy. Without a config file it starts
-   empty on a free port, so a plugin installed for every project does not
-   hold 8080 in projects that do not use TwinStub; the agent loads a config
-   with `twinstub_load_config`, and the engine moves to that config's port.
+   empty on a free port, so it does not hold 8080 in projects that do not
+   use TwinStub; the agent loads a config with `twinstub_load_config`, and
+   the engine moves to that config's port.
+
+Cases 2 and 3 are decided by the first tool call that needs an engine, not
+when the server starts. A plugin installed for every project therefore
+runs no engine in sessions that never call TwinStub, and an engine started
+with `twinstub serve` after the session began is still picked up.
+`twinstub_validate_config` works without an engine and starts none.
 
 `twinstub_status` always reports `mode`, `admin_url`, the engine
 `version`, `config_path` and `public_port`, so the agent knows where to
