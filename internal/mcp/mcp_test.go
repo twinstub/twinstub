@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -332,9 +333,10 @@ func TestValidateConfig(t *testing.T) {
 
 func TestLoadConfigOnExternalEngine(t *testing.T) {
 	cfg := writeConfig(t, "http://127.0.0.1:1")
+	quoted, _ := json.Marshal(cfg) // Windows paths carry backslashes
 	reloaded := false
 	admin := fakeAdmin(t, map[string]func(http.ResponseWriter, *http.Request){
-		"GET /api/v1/health": reply(200, `{"version": "dev", "config_path": "`+cfg+`"}`),
+		"GET /api/v1/health": reply(200, `{"version": "dev", "config_path": `+string(quoted)+`}`),
 		"POST /api/v1/reload": func(w http.ResponseWriter, r *http.Request) {
 			reloaded = true
 			reply(200, `{"reloaded": true}`)(w, r)
