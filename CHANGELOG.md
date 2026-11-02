@@ -6,11 +6,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-02
+
 ### Changed
 
 - `twinstub mcp` chooses its engine on the first tool call that needs one,
   not at startup. Sessions that never use TwinStub run no engine, and an
   engine started with `twinstub serve` after the session began is found.
+- `examples/agent-demo` keeps accounts in a JSON file and answers 503 when
+  it cannot save one, so an agent can check a retry after a 5xx.
 
 ## [1.1.0] - 2026-11-01
 
@@ -99,6 +103,7 @@ First open-source release of TwinStub OSS core.
 - Example catalog: quickstart project plus eight fintech scenarios, and
   Go / Node webhook signature-verification snippets.
 
-[Unreleased]: https://github.com/twinstub/twinstub/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/twinstub/twinstub/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/twinstub/twinstub/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/twinstub/twinstub/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/twinstub/twinstub/releases/tag/v1.0.0
