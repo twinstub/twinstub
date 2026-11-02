@@ -139,6 +139,8 @@ server in the same binary: the agent starts sessions, delivers events out
 of order, redelivers them, breaks signatures, moves time forward, and then
 checks the state of your app.
 
+![Claude Code with the TwinStub plugin finds the webhook bugs in examples/agent-demo](docs/agent-demo.gif)
+
 For Claude Code, install the [TwinStub plugin](https://github.com/twinstub/claude-plugin):
 
 ```
