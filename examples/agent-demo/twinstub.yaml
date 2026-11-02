@@ -15,9 +15,10 @@ targets:
       secret: ${ACME_WEBHOOK_SECRET:-whsec_demo}
       header: Acme-Signature
       format: "t={timestamp},v1={signature}"
+    # Acme Pay retries an event that is not answered with 2xx.
     retry:
-      attempts: 3
-      backoff: 2s
+      attempts: 4
+      backoff: 1m
 
 scenarios:
   - id: acme.payment

@@ -11,6 +11,9 @@ TwinStub with [twinstub.yaml](twinstub.yaml).
 | `GET /accounts/{user}` | status, credits and whether the user has access |
 | `POST /webhooks/acme` | Acme Pay events, signed in the `Acme-Signature` header |
 
+Accounts are saved to `accounts.json` (set `DATA_FILE` to move it), so a
+restart keeps them. Delete the file for a clean start.
+
 The unit tests pass:
 
 ```sh
@@ -35,7 +38,9 @@ curl -s localhost:3000/accounts/u1
 ```
 
 Acme Pay reports the payment as pending after 30 seconds and as completed
-after 2 minutes; a chargeback follows 30 days later.
+after 2 minutes; a chargeback follows 30 days later. An event that is not
+answered with 2xx is sent again, up to 4 attempts, 1 minute apart and then
+longer.
 
 ## Hand it to an agent
 
@@ -45,6 +50,6 @@ ask:
 
 > Check the Acme Pay webhook handling of this service for edge cases.
 
-The service has webhook bugs that its tests do not catch. Every webhook
-it gets is answered with 200, so a check of status codes alone finds
+The service has webhook bugs that its tests do not catch. Every valid
+webhook is answered with 200, so a check of status codes alone finds
 nothing; the agent has to look at what the service did.

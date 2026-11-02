@@ -1,6 +1,7 @@
 // Command agent-demo is a small subscription service. Customers pay through
 // Acme Pay; the service learns the outcome from Acme Pay's webhooks and
-// grants access and credits when a payment completes.
+// grants access and credits when a payment completes. Accounts are kept in
+// a JSON file so that a restart does not lose them.
 package main
 
 import (
@@ -38,19 +39,33 @@ func (a *Account) Access() bool { return a.Status == "active" }
 type Service struct {
 	acmeURL    string
 	secret     string
+	dataFile   string
 	httpClient *http.Client
 
 	mu       sync.Mutex
 	accounts map[string]*Account
 }
 
-func NewService(acmeURL, secret string) *Service {
-	return &Service{
+// NewService loads the accounts saved in dataFile, if it exists.
+func NewService(acmeURL, secret, dataFile string) (*Service, error) {
+	s := &Service{
 		acmeURL:    strings.TrimRight(acmeURL, "/"),
 		secret:     secret,
+		dataFile:   dataFile,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		accounts:   map[string]*Account{},
 	}
+	data, err := os.ReadFile(dataFile)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return s, nil
+	case err != nil:
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &s.accounts); err != nil {
+		return nil, fmt.Errorf("%s: %w", dataFile, err)
+	}
+	return s, nil
 }
 
 func (s *Service) Handler() http.Handler {
@@ -61,13 +76,30 @@ func (s *Service) Handler() http.Handler {
 	return mux
 }
 
-func (s *Service) get(user string) *Account {
-	a, ok := s.accounts[user]
-	if !ok {
-		a = &Account{User: user, Status: "none"}
-		s.accounts[user] = a
+// get returns a copy of the user's account; put stores a changed copy once
+// it is saved.
+func (s *Service) get(user string) Account {
+	if a, ok := s.accounts[user]; ok {
+		return *a
 	}
-	return a
+	return Account{User: user, Status: "none"}
+}
+
+func (s *Service) put(a Account) error {
+	next := make(map[string]*Account, len(s.accounts)+1)
+	for k, v := range s.accounts {
+		next[k] = v
+	}
+	next[a.User] = &a
+	data, err := json.MarshalIndent(next, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(s.dataFile, data, 0o644); err != nil {
+		return err
+	}
+	s.accounts = next
+	return nil
 }
 
 // subscribe starts a payment for a plan at Acme Pay.
@@ -103,9 +135,14 @@ func (s *Service) subscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	a := s.get(req.User)
 	a.Plan, a.PaymentID, a.Status = req.Plan, payment.ID, "pending"
-	s.mu.Unlock()
+	if err := s.put(a); err != nil {
+		log.Printf("saving account %s: %v", a.User, err)
+		writeJSON(w, 503, map[string]string{"error": "storage unavailable"})
+		return
+	}
 	writeJSON(w, 202, map[string]string{"payment_id": payment.ID, "status": payment.Status})
 }
 
@@ -157,6 +194,15 @@ func (s *Service) webhook(w http.ResponseWriter, r *http.Request) {
 		a.Credits -= ev.Data.Amount
 	default:
 		log.Printf("ignoring event %s of type %s", ev.ID, ev.Type)
+		writeJSON(w, 200, map[string]bool{"received": true})
+		return
+	}
+	// Acme Pay retries an event that is not answered with 2xx, so a failed
+	// save is reported as 503 and the event is applied on the retry.
+	if err := s.put(a); err != nil {
+		log.Printf("saving account %s for event %s: %v", a.User, ev.ID, err)
+		writeJSON(w, 503, map[string]string{"error": "storage unavailable"})
+		return
 	}
 	writeJSON(w, 200, map[string]bool{"received": true})
 }
@@ -210,7 +256,10 @@ func env(key, def string) string {
 
 func main() {
 	addr := env("ADDR", ":3000")
-	svc := NewService(env("ACME_BASE_URL", "http://localhost:8080"), env("ACME_WEBHOOK_SECRET", "whsec_demo"))
-	log.Printf("agent-demo listening on %s", addr)
+	svc, err := NewService(env("ACME_BASE_URL", "http://localhost:8080"), env("ACME_WEBHOOK_SECRET", "whsec_demo"), env("DATA_FILE", "accounts.json"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("agent-demo listening on %s, accounts in %s", addr, svc.dataFile)
 	log.Fatal(http.ListenAndServe(addr, svc.Handler()))
 }
