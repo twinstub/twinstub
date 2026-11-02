@@ -36,9 +36,10 @@ type Options struct {
 	Logger       zerolog.Logger
 	// SweepInterval defaults to 10s; tests shrink it.
 	SweepInterval time.Duration
-	// LoopbackAdmin turns the admin API on whatever the config says and
-	// binds it to 127.0.0.1. The engine embedded in `twinstub mcp` uses it.
-	LoopbackAdmin bool
+	// Loopback turns the admin API on whatever the config says and binds
+	// both listeners to the loopback interface only. The engine embedded in
+	// `twinstub mcp` uses it; `twinstub serve` listens on all interfaces.
+	Loopback bool
 }
 
 type App struct {
@@ -54,6 +55,7 @@ type App struct {
 	publicSrv *http.Server
 	adminSrv  *http.Server
 	publicLn  net.Listener
+	publicLn6 net.Listener // [::1] twin of a loopback public listener
 	adminLn   net.Listener
 
 	stopSweeper func()
@@ -107,7 +109,7 @@ func New(opts Options) (*App, error) {
 	pub.Misses = misses
 	a.publicSrv = &http.Server{Handler: pub.Handler()}
 
-	if cfg.Server.Admin.IsEnabled() || opts.LoopbackAdmin {
+	if cfg.Server.Admin.IsEnabled() || opts.Loopback {
 		configPath := opts.ConfigPath
 		if abs, err := filepath.Abs(configPath); err == nil {
 			configPath = abs
@@ -167,16 +169,24 @@ func (a *App) Start() error {
 	} else if port < 0 {
 		port = 0 // tests: bind a random free port
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	host := ""
+	if a.opts.Loopback {
+		host = "127.0.0.1"
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return fmt.Errorf("public port: %w", err)
 	}
 	a.publicLn = ln
-	go func() {
-		if err := a.publicSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			a.logger.Error().Err(err).Msg("public server stopped")
+	a.servePublic(ln)
+	if a.opts.Loopback {
+		// Apps call "localhost", which some runtimes resolve to ::1 first
+		// without falling back to 127.0.0.1. Without IPv6 this is skipped.
+		if ln6, err := net.Listen("tcp", fmt.Sprintf("[::1]:%d", a.PublicPort())); err == nil {
+			a.publicLn6 = ln6
+			a.servePublic(ln6)
 		}
-	}()
+	}
 	a.logger.Info().Int("port", a.PublicPort()).Msg("public mock server listening")
 
 	if a.adminSrv != nil {
@@ -186,13 +196,12 @@ func (a *App) Start() error {
 		} else if adminPort < 0 {
 			adminPort = 0
 		}
-		host := ""
-		if a.opts.LoopbackAdmin {
-			host = "127.0.0.1"
-		}
 		aln, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, adminPort))
 		if err != nil {
 			_ = a.publicLn.Close()
+			if a.publicLn6 != nil {
+				_ = a.publicLn6.Close()
+			}
 			return fmt.Errorf("admin port: %w", err)
 		}
 		a.adminLn = aln
@@ -212,6 +221,14 @@ func (a *App) Start() error {
 		a.logger.Warn().Err(err).Msg("hot reload watcher could not start")
 	}
 	return nil
+}
+
+func (a *App) servePublic(ln net.Listener) {
+	go func() {
+		if err := a.publicSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			a.logger.Error().Err(err).Msg("public server stopped")
+		}
+	}()
 }
 
 func (a *App) PublicPort() int {

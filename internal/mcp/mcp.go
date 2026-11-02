@@ -172,13 +172,13 @@ func (s *Server) startEmbedded(path string, explicit bool, port int) error {
 		port = s.freePort(abs)
 	}
 	a, err := app.New(app.Options{
-		ConfigPath:    abs,
-		Port:          port,
-		AdminPort:     -1,
-		TimeScale:     1.0,
-		AllowPrivate:  true,
-		Logger:        s.opts.Logger,
-		LoopbackAdmin: true,
+		ConfigPath:   abs,
+		Port:         port,
+		AdminPort:    -1,
+		TimeScale:    1.0,
+		AllowPrivate: true,
+		Logger:       s.opts.Logger,
+		Loopback:     true,
 	})
 	if err != nil {
 		return fmt.Errorf("embedded engine: %w", err)

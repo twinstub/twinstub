@@ -50,9 +50,12 @@ Desktop on macOS and Windows has it already.
    (mode `external`). Run `twinstub serve` yourself when you want to watch
    its logs.
 3. Not set and nothing answers: the server starts an engine in its own
-   process (mode `embedded`) with `--config` (default `twinstub.yaml`). Its
-   admin API listens on a random port on 127.0.0.1; its public port is the
-   config's, or a free one if that is busy. Without a config file it starts
+   process (mode `embedded`) with `--config` (default `twinstub.yaml`). It
+   listens on this machine only: the admin API on a random port on
+   127.0.0.1, the public port on 127.0.0.1 and ::1. The public port is the
+   config's, or a free one if that is busy. An app in a container or on
+   another machine needs an engine started with `twinstub serve`, which
+   listens on all interfaces. Without a config file it starts
    empty on a free port, so it does not hold 8080 in projects that do not
    use TwinStub; the agent loads a config with `twinstub_load_config`, and
    the engine moves to that config's port.

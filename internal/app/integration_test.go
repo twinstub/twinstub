@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1194,5 +1195,41 @@ func TestDeliveriesPagingAndStatus(t *testing.T) {
 	}
 	if code, _ := doJSON(t, "GET", a.adminURL()+"/api/v1/deliveries?cursor=gone", nil, ""); code != 400 {
 		t.Errorf("expired cursor: %d, want 400", code)
+	}
+}
+
+// TestLoopbackStaysOnThisMachine covers the engine embedded in twinstub
+// mcp: both listeners take the loopback interface only, the public one on
+// ::1 too where IPv6 exists, while serve keeps listening everywhere.
+func TestLoopbackStaysOnThisMachine(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "twinstub.yaml")
+	if err := os.WriteFile(cfg, []byte("version: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(Options{ConfigPath: cfg, Port: -1, AdminPort: -1, Loopback: true, Logger: zerolog.Nop()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = a.Shutdown(context.Background()) })
+
+	for name, ln := range map[string]net.Listener{"public": a.publicLn, "admin": a.adminLn} {
+		if ip := ln.Addr().(*net.TCPAddr).IP; !ip.IsLoopback() {
+			t.Errorf("%s listens on %s, want loopback only", name, ip)
+		}
+	}
+	if a.publicLn6 != nil {
+		resp, err := http.Get(fmt.Sprintf("http://[::1]:%d/nothing", a.PublicPort()))
+		if err != nil {
+			t.Fatalf("public port over ::1: %v", err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	served := startApp(t, writeProject(t, projectFiles("http://127.0.0.1:1")))
+	if ip := served.publicLn.Addr().(*net.TCPAddr).IP; !ip.IsUnspecified() {
+		t.Errorf("serve listens on %s, want all interfaces", ip)
 	}
 }
